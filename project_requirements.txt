@@ -1,0 +1,208 @@
+Student-Response Simulation Framework
+Comprehensive requirements, variables, and justifications
+
+================================================================
+1. Conceptual Overview
+================================================================
+
+Goal:
+- Simulate realistic student–item interactions across diverse educational paradigms: IRT, CDM/BKT, learning curves, misconceptions, adaptive testing, and incomplete data.
+- Enable experimental design testing for formative systems by emitting interpretable, configurable, and reproducible behavior logs.
+
+Principles:
+- All interaction = event: event stream in → event stream out.
+- All models = skill states + item metadata + flexible response function.
+- Decoupled components allow users to turn features on/off.
+
+================================================================
+2. Model Feature Checklist (with variables)
+================================================================
+
+2.1 Event Stream (Core Input)
+- Each row contains:
+  - student_id: str
+  - time: int or timestamp
+  - item_id: str
+  - observed: bool (1 if response is logged)
+  - intervention_type: str (optional)
+  - context: dict (optional metadata)
+Justification: Abstracts over calendar sessions/tests and enables flexible, real-world simulation.
+
+2.2 Latent Skills
+- Skill types:
+  - θ_{jk} : float (continuous ability)
+  - α_{jk} : binary (mastery)
+  - ordinal levels (0 to L)
+- Prerequisites:
+  - Gaussian CPT: θ_{jk} ~ N(μ + Σ λ_p θ_{jp}, σ²)
+  - Logistic CPT: Pr(α_{jk}=1 | parents) = σ(β₀ + Σ β_p α_{jp})
+Justification: Supports both IRT-style smooth curves and CDM-style gated models; DAG enforces curricular logic.
+
+2.3 Practice and Forgetting
+- Practice counter: n_{jk} : int
+- Practice shift: κ_k : float (slope of learning gain)
+- Forgetting: decay_rate_k : float (optional)
+- Interference: Δθ_{jk} -= δ_{kk'} when practicing other skills
+Justification: Models realistic skill strengthening, spacing effects, and cross-skill interference.
+
+2.4 Misconceptions (Bugs)
+- M_{jm} : binary (misconception m for student j)
+- Activation: M_{jm}=1 only if prerequisite skill is absent
+- Bug prior: π_m : float
+- Bug → distractor mapping: bug_map = {bug_id: option_idx}
+Justification: Allows systematic, skill-dependent misconceptions that promote specific wrong answers.
+
+2.5 Unified Psychometric Model Framework
+The framework implements a sophisticated unified model that can emulate multiple psychometric traditions through parameter configuration:
+
+Supported Models:
+- BKT (Bayesian Knowledge Tracing): Binary learning states, probabilistic skill acquisition
+- PFA (Performance Factor Analysis): Gradual improvement through practice
+- IRT (Item Response Theory): Static ability-based responses, no learning
+- CDM (Cognitive Diagnostic Models): Binary skills with prerequisite relationships
+- Hybrid: Full model combining all psychometric features
+
+Three Proficiency States (Hybrid Model):
+1. No Learning: P(correct) = g_i (guess parameter)
+2. Baseline: P(correct) = baseline + progress * (mastery - baseline)
+3. Mastery: P(correct) = 1 - s_i (slip parameter)
+
+Learning Progression:
+- Intervention → learning_probability → baseline_proficiency
+- Practice → practice_effectiveness → toward max_proficiency (1.0)
+- Prerequisites (CDM): learning_probability depends on parent skill mastery
+- When max reached → proficiency_state = "mastery"
+
+Variables:
+  - g_i : guess parameter (no learning state)
+  - s_i : slip parameter (mastery state)
+  - learning_probability : P(skill acquisition | intervention)
+  - baseline_proficiency : initial skill level after learning
+  - practice_effectiveness : proficiency gain per practice
+  - max_proficiency : ceiling for skill development (1.0)
+
+Model Reduction Properties:
+- Reduces to BKT when: practice_effectiveness ≈ 1.0, binary transitions
+- Reduces to PFA when: learning_probability ≈ 1.0, gradual practice gains
+- Reduces to IRT when: learning_probability = 0.0, no learning dynamics
+- CDM behavior when: prerequisite-aware learning, binary response model
+- Parameter tuning controls which psychometric model the system emulates
+
+Dynamic CDM Implementation:
+- Prerequisite relationships: Skill.parents = [prerequisite_skill_ids]
+- Learning probability calculation: get_cdm_learning_probability(parent_states)
+- Binary response model: learned (P = 1-slip) vs not learned (P = guess)
+- One skill per item: eliminates compensatory/conjunctive complexity
+
+Justification: Generalizes multiple psychometric traditions; enables comparative studies within single framework; realistic learning progression; mathematical model reduction properties; supports both static and dynamic cognitive diagnostic modeling.
+
+2.6 Interventions
+- Configurable interventions with:
+  - target_skill: str (optional)
+  - target_bug: str (optional)
+  - action: remove | add | toggle | prob_shift | skill_gain
+  - success_prob: float (probability of effect)
+  - delta_pi or delta_theta: numeric shift
+Justification: Models structured instructional actions; supports experimental A/B testing of feedback/remediation.
+
+2.7 Missingness
+- observed : bool
+- Modes:
+  - MCAR: uniform dropout rate
+  - skill-MAR: dropout conditional on q_{ik}
+  - student-MAR: dropout variance across students
+- Parameters:
+  - p_global: float
+  - skill_rates: dict[skill_id, float]
+  - student_sd: float
+Justification: Reflects realistic partial logs; lets users test inference robustness under dropout.
+
+2.8 Item Selection Helpers
+- Fixed sequence, random, CAT (max-info, KL-divergence), or user-defined.
+Justification: Simulates delivery systems from static forms to adaptive tutors.
+
+2.9 Outputs
+- Response log: long format (student, item, time, response)
+- Latent truth log: full skill, practice, and bug state
+- Config dump: canonical YAML of all parameters used
+Justification: Transparent ground-truth and reproducibility.
+
+2.10 Performance & Reproducibility
+- Core: NumPy vectorized ops
+- Optional: Numba JIT or CuPy GPU backend
+- Random generator: numpy.random.Generator with global seed
+Justification: Speed + determinism.
+
+================================================================
+3. User Interfaces
+================================================================
+
+3.1 YAML Config
+- Fully declarative, Pydantic-validated, default-complete
+- CLI: `simulate --config config.yaml --override learning.kappa_default=0.4`
+
+3.2 Fluent Python API
+```python
+Sim(seed=42)
+  .skills(dag)
+  .items(bank)
+  .learning(mode="linear", kappa_default=0.3)
+  .interventions(my_catalog)
+  .run(my_event_stream)
+```
+
+3.3 Hook API (low-level)
+- `generate_latent(config)`
+- `transition(state, event)`
+- `emit_response(state, item)`
+Justification: Enables algorithmic extensibility and benchmarking.
+
+================================================================
+4. Pydantic Model Structure
+================================================================
+
+SimulationConfig
+├─ rng : RNGConfig
+├─ skills : SkillsConfig
+│   └─ Skill[id, type, parents, practice_gain, decay]
+├─ misconceptions : Misconception[id, parent_skill, π]
+├─ items : ItemsConfig
+│   └─ Item[id, q_vector, g, s, a, b, kappa, options, bug_map]
+├─ population : PopulationConfig
+│   └─ StudentGroup[name, size, theta_shift, bug_prior_shift]
+├─ learning : LearningConfig[mode, global_kappa, interference]
+├─ interventions : dict[str, InterventionSpec]
+├─ missingness : MissingnessConfig[mode, p_global, skill_rates]
+├─ output : OutputConfig[dir, format, save_latent]
+├─ helpers : HelperConfig[scheduler settings]
+
+EventRecord:
+  student_id, time, item_id, response, observed, intervention_type, context
+
+================================================================
+5. Implementation and Tooling
+================================================================
+
+- Project: src/simlearn/, tests/, examples/, pyproject.toml
+- Type: mypy --strict
+- Style: black + ruff + isort via pre-commit
+- Testing: pytest + pytest-nbmake; coverage ≥ 90%
+- CI/CD: GitHub Actions, wheels, tagged release, PyPI
+- Docs: Sphinx + typehints + examples
+- Errors: logging + simlearn.exceptions
+- Performance: NumPy + Numba; optional CuPy/Torch GPU
+- Packaging: extras [dev], [docs], [numba]; importlib.resources
+- Reproducibility: full config and seed logged per run
+- Versioning: semantic via __version__ + CHANGELOG + bump/tag
+
+================================================================
+6. Design Rationale (Key Justifications)
+================================================================
+
+- Event stream model fits all delivery modes
+- Skill/DAG supports both mastery models and fine-grained θ
+- Bugs allow distractor realism beyond noise
+- Practice updates are additive: covers BKT, PFA, and RL-style shaping
+- b ≠ g/s: difficulty (location) must remain separate from asymptotes
+- All features toggleable: unified framework, degenerate to standard models
+- Arrow only for I/O; NumPy remains the numeric core
