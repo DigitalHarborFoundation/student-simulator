@@ -1,2 +1,0 @@
-Make sure you always use a virtual environment
-if you are installing packages, make sure you don't do "pip install xxx" but rather add it to the requirements and then install from requirements

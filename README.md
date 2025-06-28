@@ -32,6 +32,14 @@
 
 ### Installation
 
+Development:
+```bash
+pip install -e '.[dev]'
+pytest tests/
+```
+
+
+
 ```bash
 # Install from source
 git clone https://github.com/your-org/simlearn.git
