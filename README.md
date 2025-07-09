@@ -1,11 +1,11 @@
-# SimLearn: Student Response Simulation Framework
+# Student Simulator: Educational Response Simulation Framework
 
-**SimLearn** is a comprehensive Python framework for simulating realistic student-item interactions across diverse educational paradigms. It enables researchers and developers to generate interpretable, configurable, and reproducible student behavior data for testing educational technologies, adaptive systems, and learning analytics.
+**Student Simulator** is a comprehensive Python framework for simulating realistic student-item interactions across diverse educational paradigms. It enables researchers and developers to generate interpretable, configurable, and reproducible student behavior data for testing educational technologies, adaptive systems, and learning analytics.
 
 ## 🎯 Key Features
 
 ### Unified Psychometric Modeling
-- **5 Psychometric Models**: BKT, PFA, IRT, CDM, and Hybrid
+- **Multiple Psychometric Models**: BKT, PFA, IRT, CDM, and Hybrid approaches
 - **Parameter-driven switching**: Change models with a single configuration
 - **Mathematical rigor**: Models reduce to established psychometric approaches
 - **Comparative studies**: Test different learning theories within one framework
@@ -23,10 +23,10 @@
 - **Missing data patterns**: MCAR, skill-dependent, and student-dependent dropout
 
 ### Production-Ready Framework
-- **Three APIs**: Fluent (high-level), Hook (low-level), CLI (command-line)
 - **Type-safe**: Full Pydantic validation with strong typing
 - **Reproducible**: Deterministic random generation with configurable seeds
 - **Scalable**: Efficient NumPy backend with optional GPU acceleration
+- **Clean architecture**: Separated concerns with StudentHistory, LearningEngine, and AssessmentEngine
 
 ## 🚀 Quick Start
 
@@ -38,125 +38,87 @@ pip install -e '.[dev]'
 pytest tests/
 ```
 
-
-
-```bash
-# Install from source
-git clone https://github.com/your-org/simlearn.git
-cd simlearn
-pip install -e .
-
-# Or install from PyPI (when available)
-pip install simlearn
-```
-
 ### Basic Usage
 
 ```python
-from simlearn import Sim
+from studentsimulator.general import Skill, SkillSpace
+from studentsimulator.student import Student
+from studentsimulator.activity_provider import ActivityProvider
 
 # Define skills with prerequisites
 skills = [
-    {"id": "counting", "parents": []},
-    {"id": "addition", "parents": ["counting"]},
-    {"id": "multiplication", "parents": ["addition"]}
+    Skill(name="counting", prerequisites={"parent_names": []}),
+    Skill(name="addition", prerequisites={"parent_names": ["counting"]}),
+    Skill(name="multiplication", prerequisites={"parent_names": ["addition"]})
 ]
 
-# Create items aligned to skills
-items = [
-    {"id": "count_objects", "skills": [{"id": "counting"}], "g": 0.3, "s": 0.05},
-    {"id": "simple_addition", "skills": [{"id": "addition"}], "g": 0.25, "s": 0.05},
-    {"id": "times_tables", "skills": [{"id": "multiplication"}], "g": 0.2, "s": 0.05}
-]
+skill_space = SkillSpace(skills=skills)
 
-# Create students
-students = [{"id": "student_1"}, {"id": "student_2"}]
+# Create students with different skill levels
+student1 = Student(name="alice", skill_space=skill_space)
+student2 = Student(name="bob", skill_space=skill_space).set_skill_values({
+    "counting": 0.8,
+    "addition": 0.6
+})
 
-# Configure simulation
-sim = (Sim(seed=42)
-       .skills(skills)
-       .items(items)
-       .population(students)
-       .learning(mode="cdm"))  # CDM mode with prerequisites
+# Create random student with practice-based initialization
+student3 = Student(name="charlie", skill_space=skill_space).initialize_skill_values(
+    practice_count=[3, 10]  # Random practice between 3-10 sessions
+)
 
-# Define learning events
-events = [
-    # Learning intervention
-    {
-        "student_id": "student_1",
-        "time": 1,
-        "item_id": "count_objects",
-        "observed": True,
-        "intervention_type": "skill_boost",
-        "context": {"target_skill": "counting", "boost": 0.8}
-    },
-    # Practice response
-    {
-        "student_id": "student_1",
-        "time": 2,
-        "item_id": "count_objects",
-        "observed": True
-    }
-]
+# Set up activity provider and assessments
+provider = ActivityProvider()
+provider.register_skills(skill_space)
 
-# Run simulation
-response_log, latent_state = sim.run(events)
-print(response_log)
+item_pool = provider.construct_item_pool(
+    name="math_pool",
+    skills=skill_space.skills,
+    n_items_per_skill=20,
+    difficulty_logit_range=(-2, 2),
+    guess_range=(0.1, 0.3),
+    slip_range=(0.01, 0.2),
+    discrimination=1.0
+)
+
+assessment = provider.generate_fixed_form_assessment(
+    n_items=10,
+    item_pool=item_pool,
+    skills=skill_space
+)
+
+# Students take the assessment
+for student in [student1, student2, student3]:
+    results = student.take_test(assessment, timestamp=1)
+    print(f"{student.name}: {results.percent_correct:.1f}% correct")
+
+# Save results to CSV
+from studentsimulator.student import save_student_profile_to_csv, save_student_activity_to_csv
+
+save_student_profile_to_csv([student1, student2, student3], "students.csv")
+save_student_activity_to_csv([student1, student2, student3], "activity.csv")
 ```
 
-## 📊 Psychometric Models
+## 📊 Recent Improvements
 
-SimLearn supports five major psychometric modeling paradigms:
+### Consistent Naming Conventions
+- **Unified terminology**: All code now uses `prerequisites.parent_names` instead of mixed `parents`/`prerequisites`
+- **Backward compatibility**: `skill.parents` property provides seamless migration path
+- **Fixed typos**: Corrected `discrimination` parameter naming throughout
 
-### 1. Bayesian Knowledge Tracing (BKT)
-- **Binary learning states**: Skills are either learned or not learned
-- **Probabilistic acquisition**: Learning occurs with some probability per practice
-- **Sudden mastery**: Performance jumps from guess rate to mastery level
+### Clean Architecture
+- **StudentHistory extraction**: Separated event tracking from core student behavior
+- **Single responsibility**: Each class has a clear, focused purpose
+- **Better testability**: Components can be tested in isolation
 
-```python
-sim.learning(mode="bkt")
-# Characteristics: learning_probability=0.3, practice_effectiveness=1.0 (binary jump)
-```
+### Enhanced Event System
+- **ItemResponseEvent**: Structured events for item interactions with proper typing
+- **LearningEvent**: Dedicated events for learning activities
+- **Rich metadata**: Events include feedback flags, practice increments, and timestamps
 
-### 2. Performance Factor Analysis (PFA)
-- **Gradual improvement**: Skills improve incrementally with practice
-- **Practice-driven**: More practice leads to better performance
-- **Smooth learning curves**: Continuous proficiency growth
-
-```python
-sim.learning(mode="pfa")
-# Characteristics: learning_probability=0.9, practice_effectiveness=0.15 (gradual)
-```
-
-### 3. Item Response Theory (IRT)
-- **Static ability**: No learning occurs, fixed student ability
-- **Consistent performance**: Responses based solely on initial proficiency
-- **No practice effects**: Performance remains stable over time
-
-```python
-sim.learning(mode="irt")
-# Characteristics: learning_probability=0.0, practice_effectiveness=0.0 (no learning)
-```
-
-### 4. Cognitive Diagnostic Models (CDM)
-- **Prerequisite dependencies**: Learning probability depends on prior skills
-- **Binary skill states**: Skills are mastered or not mastered
-- **Hierarchical learning**: Must learn prerequisites before advanced skills
-
-```python
-sim.learning(mode="cdm")
-# Characteristics: prerequisite-aware learning, binary response model
-```
-
-### 5. Hybrid Model
-- **All features enabled**: Combines aspects of all psychometric traditions
-- **Flexible parameters**: Fine-tune to match specific learning scenarios
-- **Research comparisons**: Baseline for comparing other models
-
-```python
-sim.learning(mode="hybrid")
-# Characteristics: Full model with learning, practice, and skill progression
-```
+### Robust Data Export
+- **CSV headers**: Updated to use `engagement_object_id` and `group_id` for clarity
+- **Null safety**: Proper handling of optional fields and missing data
+- **Event filtering**: Support for different event types in exports
 
 ## 🔬 Research Applications
 
@@ -246,14 +208,15 @@ simulate --config experiment.yaml --events student_interactions.yaml --output re
 
 **Student**: Individual learners with skill progression
 ```python
-student.current_skills  # Dict[skill_id, SkillState]
-student.learning_history  # Complete trace of learning events
-student.misconceptions  # Active misconceptions affecting responses
+student.skill_state  # Dict[skill_name, SkillState]
+student.history.get_events()  # Complete trace of learning events
+student.history.get_assessment_events()  # Assessment-specific events
 ```
 
 **Skill**: Competencies with prerequisite relationships
 ```python
-skill.parents  # List of prerequisite skill IDs
+skill.prerequisites.parent_names  # List of prerequisite skill names
+skill.parents  # Backward compatibility property
 skill.practice_gain  # Learning rate parameters
 skill.get_cdm_learning_probability(parent_states)  # CDM prerequisite logic
 ```
@@ -286,11 +249,11 @@ Model complex skill dependencies:
 
 ```python
 skills = [
-    {"id": "arithmetic", "parents": []},
-    {"id": "algebra", "parents": ["arithmetic"]},
-    {"id": "calculus", "parents": ["algebra"]},
-    {"id": "statistics", "parents": ["arithmetic"]},  # Alternative path
-    {"id": "data_science", "parents": ["statistics", "algebra"]}  # Convergent
+    Skill(name="arithmetic", prerequisites={"parent_names": []}),
+    Skill(name="algebra", prerequisites={"parent_names": ["arithmetic"]}),
+    Skill(name="calculus", prerequisites={"parent_names": ["algebra"]}),
+    Skill(name="statistics", prerequisites={"parent_names": ["arithmetic"]}),  # Alternative path
+    Skill(name="data_science", prerequisites={"parent_names": ["statistics", "algebra"]})  # Convergent
 ]
 ```
 
@@ -308,7 +271,7 @@ interventions = {
 
 ## 🧪 Testing and Validation
 
-SimLearn includes comprehensive test suites validating:
+Student Simulator includes comprehensive test suites validating:
 
 - **Psychometric model equivalence**: Mathematical reduction properties
 - **Learning progression**: Realistic skill development patterns
@@ -345,18 +308,18 @@ We welcome contributions! Please see our [contribution guidelines](CONTRIBUTING.
 
 ## 📄 License
 
-SimLearn is released under the [MIT License](LICENSE).
+Student Simulator is released under the [MIT License](LICENSE).
 
 ## 🔗 Citation
 
-If you use SimLearn in your research, please cite:
+If you use Student Simulator in your research, please cite:
 
 ```bibtex
-@software{simlearn2024,
-  title={SimLearn: A Unified Framework for Educational Response Simulation},
+@software{studentsimulator2024,
+  title={Student Simulator: A Unified Framework for Educational Response Simulation},
   author={Your Name and Contributors},
   year={2024},
-  url={https://github.com/your-org/simlearn}
+  url={https://github.com/your-org/student-simulator}
 }
 ```
 

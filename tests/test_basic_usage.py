@@ -16,7 +16,7 @@ from pathlib import Path
 import pytest
 
 from studentsimulator.activity_provider import ActivityProvider
-from studentsimulator.general import Skill
+from studentsimulator.general import Skill, SkillSpace
 from studentsimulator.student import (
     Student,
     save_student_activity_to_csv,
@@ -29,7 +29,7 @@ from studentsimulator.student import (
 
 
 @pytest.fixture()
-def example_skills() -> list[Skill]:
+def example_skill_space() -> SkillSpace:
     """Create the four example skills presented in `.dev/temp.py`."""
 
     raw_skills = [
@@ -37,33 +37,45 @@ def example_skills() -> list[Skill]:
             "name": "number_recognition",
             "code": "CCSS.MATH.K.CC.A.3",
             "description": "Recognize and write numerals 0-20",
-            "parents": [],
-            "decay": 0.01,
+            "decay_logit": 0.01,  # natural temporal decay
         },
         {
             "name": "place_value_ones",
             "code": "CCSS.MATH.1.NBT.A.1",
             "description": "Understand that the two digits of a two-digit number represent amounts",
-            "parents": ["number_recognition"],
-            "decay": 0.02,
-        },
-        {
-            "name": "place_value_tens",
-            "code": "CCSS.MATH.1.NBT.A.2",
-            "description": "Understand place value of tens",
-            "parents": ["place_value_ones"],
-            "decay": 0.02,
+            "prerequisites": {
+                "parent_names": ["number_recognition"],
+                "dependence_model": "all",  # all or any
+            },
+            "probability_of_learning_without_prerequisites": 0.1,  # probability of learning this skill without prerequisites
+            "decay_logit": 0.02,
         },
         {
             "name": "addition_no_carry",
             "code": "CCSS.MATH.1.OA.A.1",
             "description": "Add within 20 without regrouping",
-            "parents": ["number_recognition", "place_value_ones"],
-            "decay": 0.03,
+            "prerequisites": {
+                "parent_names": ["place_value_tens"],
+                "dependence_model": "all",  # all or any
+            },
+            "decay_logit": 0.03,
+            "probability_of_learning_without_prerequisites": 0.01,  # probability of learning this skill without prerequisites
+        },
+        {
+            "name": "place_value_tens",
+            "code": "CCSS.MATH.1.NBT.A.2",
+            "description": "Understand place value of tens",
+            "prerequisites": {
+                "parent_names": ["place_value_ones"],
+                "dependence_model": "all",  # all or any
+            },
+            "decay_logit": 0.02,
+            "probability_of_learning_without_prerequisites": 0.1,  # probability of learning this skill without prerequisites
         },
     ]
 
-    return [Skill(**spec) for spec in raw_skills]
+    skills = [Skill(**spec) for spec in raw_skills]
+    return SkillSpace(skills=skills)
 
 
 # ---------------------------------------------------------------------------
@@ -71,7 +83,7 @@ def example_skills() -> list[Skill]:
 # ---------------------------------------------------------------------------
 
 
-def test_end_to_end_basic_usage(example_skills: list[Skill], tmp_path: Path):
+def test_end_to_end_basic_usage(example_skill_space: SkillSpace, tmp_path: Path):
     """Replicate the workflow from `.dev/temp.py` and validate outcomes."""
 
     # Make results deterministic where randomness is used by the simulator.
@@ -80,13 +92,13 @@ def test_end_to_end_basic_usage(example_skills: list[Skill], tmp_path: Path):
     # ------------------------------------------------------------------
     # Students with varying prior knowledge
     # ------------------------------------------------------------------
-    s1 = Student(name="bob", skills=example_skills)
+    s1 = Student(name="bob", skill_space=example_skill_space)
 
-    s2 = Student(skills=example_skills).set_skill_values(
+    s2 = Student(skill_space=example_skill_space).set_skill_values(
         {"number_recognition": 0.5, "place_value_ones": 0.3}
     )
 
-    s3 = Student(skills=example_skills).set_skill_values(
+    s3 = Student(skill_space=example_skill_space).set_skill_values(
         {
             "number_recognition": 0.8,
             "place_value_ones": 0.6,
@@ -95,32 +107,38 @@ def test_end_to_end_basic_usage(example_skills: list[Skill], tmp_path: Path):
         }
     )
 
+    s4 = Student(skill_space=example_skill_space).initialize_skill_values(
+        practice_count=[1, 9]
+    )  # random
+
     # Ensure each student has a skill_state entry for every registered skill.
-    for student in (s1, s2, s3):
+    for student in (s1, s2, s3, s4):
         assert student.skill_state  # not None / empty
-        assert set(student.skill_state.keys()) == {sk.name for sk in example_skills}
+        assert set(student.skill_state.keys()) == {
+            sk.name for sk in example_skill_space.skills
+        }
 
     # ------------------------------------------------------------------
     # Activity provider, item pool, and assessment
     # ------------------------------------------------------------------
     provider = ActivityProvider()
-    provider.register_skills(example_skills)
+    provider.register_skills(example_skill_space)
 
     item_pool = provider.construct_item_pool(
         name="basic_arithmetic_item_pool",
-        skills=example_skills,
+        skills=example_skill_space.skills,
         n_items_per_skill=20,
-        difficulty=(-2, 2),
-        guess=(0.1, 0.3),
-        slip=(0.01, 0.2),
-        descrimination=1.0,  # note: typo kept to match original code path
+        difficulty_logit_range=(-2, 2),
+        guess_range=(0.1, 0.3),
+        slip_range=(0.01, 0.2),
+        discrimination=1.0,
     )
 
     # The pool should contain exactly 4 * 20 items.
     assert len(item_pool.items) == 4 * 20
 
     assessment = provider.generate_fixed_form_assessment(
-        n_items=20, item_pool=item_pool
+        n_items=20, item_pool=item_pool, skills=example_skill_space
     )
 
     assert len(assessment.items) == 20
@@ -128,11 +146,11 @@ def test_end_to_end_basic_usage(example_skills: list[Skill], tmp_path: Path):
     # ------------------------------------------------------------------
     # Students take the assessment
     # ------------------------------------------------------------------
-    for student in (s1, s2, s3):
+    for student in (s1, s2, s3, s4):
         results = student.take_test(assessment, timestamp=1)
 
         # A BehaviorEventCollection is appended to history and returned.
-        assert results is student.history[-1]
+        assert results is student.history.get_events()[-1]
 
         # One response per item.
         assert len(results.behavioral_events) == len(assessment.items)
@@ -143,8 +161,12 @@ def test_end_to_end_basic_usage(example_skills: list[Skill], tmp_path: Path):
     # ------------------------------------------------------------------
     # Persist outcomes to CSV and verify contents
     # ------------------------------------------------------------------
-    profile_csv = tmp_path / "students.csv"
-    activity_csv = tmp_path / "student_activity.csv"
+    # Create outputs directory if it doesn't exist
+    outputs_dir = tmp_path / "outputs"
+    outputs_dir.mkdir(exist_ok=True)
+
+    profile_csv = outputs_dir / "students.csv"
+    activity_csv = outputs_dir / "student_activity.csv"
 
     save_student_profile_to_csv([s1, s2, s3], filename=str(profile_csv))
     save_student_activity_to_csv([s1, s2, s3], filename=str(activity_csv))

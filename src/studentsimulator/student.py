@@ -1,12 +1,12 @@
 import csv
 import os
 import random
-from typing import Annotated, Any, Dict, List, Optional
+from typing import Annotated, Any, Dict, List, Optional, Union
 
-from pydantic import Field, validate_arguments
+from pydantic import Field
 
 from studentsimulator.activity_provider import FixedFormAssessment, Item
-from studentsimulator.general import Model, SkillSpace
+from studentsimulator.general import Model, Skill, SkillSpace
 from studentsimulator.math import logistic, logit
 
 
@@ -17,21 +17,77 @@ class SkillState(Model):
     skill_level: float = Field(
         ge=0.0, le=1.0, description="Current skill level (0.0 to 1.0)"
     )
+    learned: bool = Field(
+        default=False,
+        description="Whether the skill has been learned cognitively. Practice can't increase the skill level if the skill is not learned.",
+    )
+
+
+class StudentHistory(Model):
+    """Tracks student's learning and assessment history."""
+
+    student_id: int
+    events: List[Any] = Field(default_factory=list)
+
+    def add_event(self, event: Any) -> None:
+        """Add an event to the history."""
+        self.events.append(event)
+
+    def get_events(self) -> List[Any]:
+        """Get all events in the history."""
+        return self.events
+
+    def get_assessment_events(self) -> List["BehaviorEventCollection"]:
+        """Get all assessment events."""
+        return [
+            event for event in self.events if isinstance(event, BehaviorEventCollection)
+        ]
+
+    def get_behavior_events(self) -> List["BehaviorEvent"]:
+        """Get all individual behavior events."""
+        behavior_events = []
+        for event in self.events:
+            if isinstance(event, BehaviorEventCollection):
+                behavior_events.extend(event.behavioral_events)
+            elif isinstance(event, BehaviorEvent):
+                behavior_events.append(event)
+        return behavior_events
+
+    def clear(self) -> None:
+        """Clear all events from history."""
+        self.events.clear()
 
 
 class Student(Model):
     name: Optional[str] = "None"  # just for use when printing for demos
     skill_space: SkillSpace  # list of skill IDs available to this student
-    skill_state: Optional[Dict[str, "SkillState"]] = Field(
+    skill_state: Dict[str, "SkillState"] = Field(
         default_factory=dict
     )  # current skill states
-    history: Optional[List[Any]] = []
+    history: Optional[StudentHistory] = None
+
+    def __init__(self, **data):
+        # First call the parent Model.__init__ for validation and ID assignment
+        super().__init__(**data)
+
+        # Initialize history if not provided
+        if self.history is None:
+            self.history = StudentHistory(student_id=self.id)
+
+        # Initialize all skill levels to 0
+        if self.skill_space and not self.skill_state:
+            self.skill_state = {}
+            for skill in self.skill_space.skills:
+                self.skill_state[skill.name] = SkillState(
+                    skill_name=skill.name, skill_level=0
+                )
 
     def print_history(self):
         """Nicely print the student's history."""
-        if not self.history:
+        if not self.history or not self.history.get_events():
             print("No history available.")
-        print("\n".join(str(event) for event in self.history))
+        else:
+            print("\n".join(str(event) for event in self.history.get_events()))
 
     def __str__(self):
         rep = f"Student(name={self.name}, id={self.id})"
@@ -46,6 +102,7 @@ class Student(Model):
         for skill_name, level in skill_values.items():
             if self.skill_state is not None and skill_name in self.skill_state:
                 self.skill_state[skill_name].skill_level = level
+                self.skill_state[skill_name].learned = True
             else:
                 # If the skill is not registered, create a new state
                 if self.skill_state is None:
@@ -53,36 +110,132 @@ class Student(Model):
                 self.skill_state[skill_name] = SkillState(
                     skill_name=skill_name, skill_level=level
                 )
+        return self
 
     def initialize_skill_values(
         self,
-        default_learning_prob: Annotated[
-            float, "Chance of learning the concept after a single learning event"
-        ] = 0.7,
         practice_count: Annotated[
-            int, "Number of practice events to simulate. Default=10."
-        ] = 0,
+            Union[int, list[int]],
+            "Number of practice events to simulate. If int, use as is. If list of two ints, draw random int between min and max (inclusive). Default=10. Example: practice_count=[3,7] will randomly choose between 3 and 7 (inclusive).",
+        ] = 5,
         include_in_history: Annotated[
             bool, "Whether to include practice events in the student history."
         ] = False,
     ):
-        pass
+        """The goal of this method is to initialize a student's skill values "randomly" while
+        still respecting prerequisites.
 
-    # learning_history: Optional[list[LearningEvent]] = []  # complete history
-    # current_skills: Dict[str, "SkillState"] = Field(default_factory=dict)  # current skill states
+        To do this, we run students through a series of learning and practice events in the
+        topological order of the skill space.
+        Learning events have a chance of turning "on" a skill by converting a gate from 0 to 1,
+        and then practice events increase the skill level.  Practice events are not effective
+        if the learning gate is still 0.
+        """
 
-    # skill_state: Optional[SkillState] = None
+        # Iterate through the skills in topological order
+        for skill in self.skill_space.skills:
+            # Encounter a learning event
+            self.learn(skill)
 
-    def initialize(self):
-        # generates student history and/or skill
-        pass
+            # Determine the number of practice events for this skill
+            if isinstance(practice_count, int):
+                n_practice = practice_count
+            elif (
+                isinstance(practice_count, (list, tuple))
+                and len(practice_count) == 2
+                and all(isinstance(x, int) for x in practice_count)
+            ):
+                n_practice = random.randint(
+                    practice_count[0], practice_count[1]
+                )  # inclusive of both endpoints
+            else:
+                raise ValueError(
+                    "practice_count must be an int or a list/tuple of two ints."
+                )
 
-    @validate_arguments
-    def take_test(self, test: FixedFormAssessment, timestamp=0) -> None:
+            # Increment through the practice iterations
+            # Skill level will only increase if the skill is learned
+            for i in range(n_practice):
+                self.practice(skill)
+        # TODO: include history of learning and practice events
+        return self
+
+    def learn(self, skill: Skill, record_event_in_history: bool = False):
+        """Learn a skill.
+        Learning happens during a 'learning encounter'.
+        First we check to see if the student has the necessary prerequisites, if there are any.
+        If they do, they learn with p=probability_of_learning_with_prerequisites.
+        If they don't, they learn with p=probability_of_learning_without_prerequisites.
+        If the skill is learned during this encounter, this sets the gate skill.learn=True,
+        which enables practice to be productive and increase the skill level.
+        """
+
+        # get random number
+        random_number = random.random()
+        # Check to see if the skill has prerequisites
+        if self.has_prerequisites(skill):
+            if random_number < skill.probability_of_learning_with_prerequisites:
+                # Set learned to True. If it was already True, we don't change it.
+                self.skill_state[skill.name].learned = True
+        else:
+            if random_number < skill.probability_of_learning_without_prerequisites:
+                self.skill_state[skill.name].learned = True
+
+        # If the skill is learned, we set the skill level to the initial skill level
+        if self.skill_state[skill.name].learned:
+            # If the skill level is less than the initial skill level, increase it to equal the initial skill level
+            if self.skill_state[skill.name].skill_level < skill.initial_skill_level:
+                self.skill_state[skill.name].skill_level = skill.initial_skill_level
+
+    def practice(self, skill: Skill):
+        """Practice a skill.
+        Practice happens during a 'practice encounter'.
+        Practice increases the skill level in logit space.
+        Practice is only effective if the skill is learned.
+        """
+        if self.skill_state[skill.name].learned:
+            self.skill_state[skill.name].skill_level = logistic(
+                logit(self.skill_state[skill.name].skill_level)
+                + skill.practice_increment_logit
+            )
+        # Practice should create a BehaviorEvent that's stored in the student's history
+        if self.history:
+            self.history.add_event(
+                ItemResponseEvent(
+                    student_id=self.id,
+                    item=None,
+                    score=None,
+                    feedback_given=True,
+                    practice_increment_logit=skill.practice_increment_logit,
+                )
+            )
+
+    def has_prerequisites(self, skill: Skill) -> bool:
+        """Check if the student has the prerequisites for a skill."""
+        if not skill.prerequisites.parent_names:
+            return True
+        if skill.prerequisites.dependence_model == "any":
+            return any(
+                self.skill_state[prerequisite].learned
+                for prerequisite in skill.prerequisites.parent_names
+            )
+        elif skill.prerequisites.dependence_model == "all":
+            return all(
+                self.skill_state[prerequisite].learned
+                for prerequisite in skill.prerequisites.parent_names
+            )
+        else:
+            raise ValueError(
+                f"Invalid dependence model: {skill.prerequisites.dependence_model}"
+            )
+
+    def take_test(
+        self, test: FixedFormAssessment, timestamp=0
+    ) -> "BehaviorEventCollection":
         """Simulate taking a test with no formative feedback."""
         responses = []
         for item in test:
-            response = self.engage(
+            response = self.respond_to_item(
                 group=test, item=item, feedback=False, timestamp=timestamp
             )
             responses.append(response)
@@ -90,25 +243,33 @@ class Student(Model):
             student_id=self.id,
             behavioral_events=responses,
         )
-        self.history.append(test_results)
+        if self.history:
+            self.history.add_event(test_results)
 
         return test_results
 
-    def engage(self, item: "Item", feedback=False, **kwargs) -> "BehaviorEvent":
+    def respond_to_item(
+        self, item: "Item", feedback=False, **kwargs
+    ) -> "BehaviorEvent":
         """Simulate engaging with an item, and returning a response."""
         prob_correct = self.get_prob_correct(item)
         correct = 1 if random.random() < prob_correct else 0
-        return BehaviorEvent(
-            student_id=self.id, engagement_object=item, score=correct, **kwargs
+        return ItemResponseEvent(
+            student_id=self.id,
+            item=item,
+            score=correct,
+            feedback_given=feedback,
+            **kwargs,
         )
 
     def get_prob_correct(self, item: "Item") -> float:
         """Calculate probability of correct response based on skill state."""
-        skill_level_01 = self.skill_state.get(item.skill.name).skill_level
-        skill_level_logit = logit(skill_level_01)
+
+        skill_level = self.skill_state[item.skill.name].skill_level
+        skill_level_logit = logit(skill_level)
 
         return item.guess + (1 - item.slip - item.guess) * logistic(
-            item.discrimination * (skill_level_logit - item.difficulty)
+            item.discrimination * (skill_level_logit - item.difficulty_logit)
         )
 
 
@@ -116,33 +277,50 @@ class BehaviorEventCollection(Model):
     """Group of behavior events, typically for an activity or assessment."""
 
     student_id: int
-    timestamp: int = None
-    behavioral_events: List["BehaviorEvent"] = Field(default_factory=list)
+    timestamp: int = 0
+    behavioral_events: List["BehaviorEvent"] = Field(
+        default_factory=list,
+        description="List of behavior events (can be BehaviorEvent or any subclass thereof)",
+    )
 
     @property
     def percent_correct(self) -> float:
         """Calculate the average score of all behavior events."""
         if not self.behavioral_events:
-            return None
+            return 0.0
         total_score = sum(
-            event.score for event in self.behavioral_events if event.score is not None
+            event.score
+            for event in self.behavioral_events
+            if (isinstance(event, ItemResponseEvent) and event.score is not None)
         )
         return total_score / len(self.behavioral_events) * 100
 
 
 class BehaviorEvent(Model):
     student_id: int
-    timestamp: int = None
-    engagement_object: Item
-    group: Any = None  # Optional group or activity this behavior is part of
+    timestamp: int = 0
     # behavior: "BehaviorRepresentation" = None
+
+
+class ItemResponseEvent(BehaviorEvent):
+    item: Optional[Item] = None
     score: Optional[float] = None
+    feedback_given: Optional[bool] = False
+    practice_increment_logit: Optional[float] = 0.0
 
     def __str__(self):
         return (
-            f"id={self.id}, type={str(self.engagement_object.__class__.__name__)}, "
+            f"id={self.id}, type={str(self.item.__class__.__name__)}, "
             f"score={self.score}, timestamp={self.timestamp}"
         )
+
+    @property
+    def engagement_object(self) -> Optional[Item]:
+        return self.item
+
+
+class LearningEvent(BehaviorEvent):
+    skill: Optional[Skill] = None
 
 
 Student.model_rebuild()
@@ -194,217 +372,54 @@ def save_student_profile_to_csv(students: List[Student], filename: str) -> None:
                 )
 
 
-def save_student_activity_to_csv(students: List[Student], filename: str) -> None:
+def save_student_activity_to_csv(
+    students: List[Student],
+    filename: str,
+    include_engagements_without_ids: bool = False,
+) -> None:
     """Save student activity (behavior events) to a CSV file."""
 
     path = prepare_directory(filename)
     with open(path, mode="w", newline="") as file:
         writer = csv.writer(file)
         # Write header
-        header = ["student_id", "timestamp", "engagement_object", "score", "group"]
+        header = [
+            "student_id",
+            "timestamp",
+            "engagement_object_id",
+            "score",
+            "group_id",
+        ]
         writer.writerow(header)
 
         # Write each student's behavior events
         for student in students:
-            for event in student.history:
+            if not student.history:
+                continue
+            for event in student.history.get_events():
+                all_events = []
                 if isinstance(event, BehaviorEventCollection):
                     for behavior_event in event.behavioral_events:
-                        writer.writerow(
-                            [
-                                student.id,
-                                behavior_event.timestamp,
-                                behavior_event.engagement_object.id,
-                                behavior_event.score,
-                                behavior_event.group.id,
-                            ]
-                        )
+                        if include_engagements_without_ids:
+                            all_events.append(behavior_event)
+                        else:
+                            if behavior_event.engagement_object is not None:
+                                all_events.append(behavior_event)
                 elif isinstance(event, BehaviorEvent):
+                    if include_engagements_without_ids:
+                        all_events.append(event)
+                    else:
+                        if event.engagement_object is not None:
+                            all_events.append(event)
+                for behavior_event in all_events:
                     writer.writerow(
                         [
                             student.id,
-                            event.timestamp,
-                            event.engagement_object.id,
-                            event.score,
-                            event.group.id,
+                            behavior_event.timestamp,
+                            behavior_event.engagement_object.id,
+                            behavior_event.score
+                            if hasattr(behavior_event, "score")
+                            else None,
+                            event.id if hasattr(event, "id") else None,
                         ]
                     )
-
-
-#     def perform_activity(self, activity: "Activity") -> None:
-#         # get next activity
-#         # perform activity to generate behavior
-#         # get feedback
-#         # update skills based on activity type and feedback
-#         pass
-
-#     def get_skill_level(self, skill_id: str) -> float:
-#         """Get current proficiency level for a skill."""
-#         if skill_id not in self.current_skills:
-#             return 0.0
-#         return self.current_skills[skill_id].current_proficiency
-
-#     def get_skill_state(self, skill_id: str) -> "SkillState":
-#         """Get complete skill state for a skill."""
-#         if skill_id not in self.current_skills:
-#             self.current_skills[skill_id] = SkillState(skill_id=skill_id)
-#         return self.current_skills[skill_id]
-
-#     def apply_intervention(self, intervention: "InterventionEvent", rng: Any) -> bool:
-#         """Apply intervention and return whether learning occurred."""
-#         if not intervention.target_skill:
-#             return False
-
-#         skill_state = self.get_skill_state(intervention.target_skill)
-
-#         # Check if learning occurs (probabilistic)
-#         if rng.random() < intervention.learning_probability:
-#             # Student learns the skill
-#             skill_state.proficiency_state = "baseline"
-#             skill_state.baseline_proficiency = intervention.baseline_proficiency
-#             skill_state.current_proficiency = intervention.baseline_proficiency
-
-#             # Record learning event
-#             event = LearningEvent(
-#                 timestamp=intervention.timestamp,
-#                 event_type="skill_learned",
-#                 skill_changes={
-#                     intervention.target_skill: intervention.baseline_proficiency
-#                 },
-#                 context={"intervention_type": intervention.intervention_type},
-#             )
-#             self.learning_history.append(event)
-#             return True
-#         return False
-
-#     def practice_skill(
-#         self, skill_id: str, practice_effectiveness: float, timestamp: int
-#     ) -> None:
-#         """Update skill proficiency through practice."""
-#         skill_state = self.get_skill_state(skill_id)
-
-#         if skill_state.proficiency_state == "no_learning":
-#             # No effect if skill not yet learned
-#             return
-
-#         # Increase proficiency up to maximum
-#         old_proficiency = skill_state.current_proficiency
-#         skill_state.current_proficiency = min(
-#             skill_state.current_proficiency + practice_effectiveness,
-#             skill_state.max_proficiency,
-#         )
-
-#         # Check if mastery achieved
-#         if skill_state.current_proficiency >= skill_state.max_proficiency:
-#             skill_state.proficiency_state = "mastery"
-
-#         skill_state.practice_count += 1
-#         skill_state.last_practiced = timestamp
-
-#         # Record practice event if there was improvement
-#         improvement = skill_state.current_proficiency - old_proficiency
-#         if improvement > 0:
-#             event = LearningEvent(
-#                 timestamp=timestamp,
-#                 event_type="skill_practiced",
-#                 skill_changes={skill_id: improvement},
-#             )
-#             self.learning_history.append(event)
-
-#     def record_behavioral_event(self, behavioral_event: "BehavioralEvent") -> None:
-#         """Record a behavioral event in learning history."""
-#         # Convert behavioral event to internal learning event
-#         learning_event = LearningEvent(
-#             timestamp=behavioral_event.timestamp,
-#             event_type="behavioral_event",
-#             context={
-#                 "behavior": behavioral_event.behavior.model_dump(),
-#                 "feedback": (
-#                     behavioral_event.feedback.model_dump()
-#                     if behavioral_event.feedback
-#                     else None
-#                 ),
-#                 **behavioral_event.context,
-#             },
-#         )
-#         self.learning_history.append(learning_event)
-
-#     def record_intervention_event(
-#         self, intervention_event: "InterventionEvent"
-#     ) -> None:
-#         """Record an intervention event in learning history."""
-#         learning_event = LearningEvent(
-#             timestamp=intervention_event.timestamp,
-#             event_type="intervention_event",
-#             context={
-#                 "intervention_type": intervention_event.intervention_type,
-#                 "target_skill": intervention_event.target_skill,
-#                 "intervention_data": intervention_event.intervention_data,
-#             },
-#         )
-#         self.learning_history.append(learning_event)
-
-#     def record_response(
-#         self, timestamp: int, item_id: str, response: int, **context: Any
-#     ) -> None:
-#         """Record a response event (backward compatibility)."""
-#         # Convert to new behavioral event structure
-#         behavior = BehaviorRepresentation(
-#             behavior_type="item_selection",
-#             item_id=item_id,
-#             selected_option=str(response),  # Convert response to string option
-#         )
-
-#         feedback = None
-#         if "intervention_type" in context:
-#             # This was an intervention-related response, create minimal feedback
-#             feedback = Feedback(
-#                 feedback_type="binary",
-#                 correct=bool(response),  # Simple assumption: 1=correct, 0=incorrect
-#             )
-
-#         behavioral_event = BehavioralEvent(
-#             student_id=self.id,
-#             timestamp=timestamp,
-#             behavior=behavior,
-#             feedback=feedback,
-#             context=context,
-#         )
-
-#         self.record_behavioral_event(behavioral_event)
-
-
-# class SkillsConfig(BaseModel):
-#     skills: List[Skill] = []
-
-
-# class SkillState(BaseModel):
-#     skill_id: str
-#     proficiency_state: str = "no_learning"  # "no_learning", "baseline", "mastery"
-#     baseline_proficiency: float = 0.0  # proficiency after intervention
-#     current_proficiency: float = 0.0  # current proficiency (increases with practice)
-#     max_proficiency: float = 1.0  # maximum achievable proficiency
-#     practice_count: int = 0
-#     last_practiced: Optional[int] = None  # timestamp
-
-#     def get_probability_correct(
-#         self, item_guess: float, item_slip: float, mode: str = "hybrid"
-#     ) -> float:
-#         """Calculate P(correct) based on current proficiency state and item parameters."""
-#         if mode == "cdm":
-#             # CDM binary model: learned vs not learned
-#             if self.current_proficiency > 0.5:  # "Learned" threshold
-#                 return 1.0 - item_slip
-#             else:
-#                 return item_guess
-#         else:
-#             # Original hybrid model
-#             if self.proficiency_state == "no_learning":
-#                 return item_guess
-#             elif self.proficiency_state == "mastery":
-#                 return 1.0 - item_slip
-#             else:  # baseline or intermediate
-#                 # Linear interpolation between baseline and mastery
-#                 progress = min(self.current_proficiency / self.max_proficiency, 1.0)
-#                 baseline_prob = self.baseline_proficiency
-#                 mastery_prob = 1.0 - item_slip
-#                 return baseline_prob + progress * (mastery_prob - baseline_prob)

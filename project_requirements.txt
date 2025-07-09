@@ -41,7 +41,7 @@ Justification: Supports both IRT-style smooth curves and CDM-style gated models;
 2.3 Practice and Forgetting
 - Practice counter: n_{jk} : int
 - Practice shift: κ_k : float (slope of learning gain)
-- Forgetting: decay_rate_k : float (optional)
+- Forgetting: decay_logit : float (optional)
 - Interference: Δθ_{jk} -= δ_{kk'} when practicing other skills
 Justification: Models realistic skill strengthening, spacing effects, and cross-skill interference.
 
@@ -89,7 +89,7 @@ Model Reduction Properties:
 - Parameter tuning controls which psychometric model the system emulates
 
 Dynamic CDM Implementation:
-- Prerequisite relationships: Skill.parents = [prerequisite_skill_ids]
+- Prerequisite relationships: Skill.prerequisites.parent_names = [prerequisite_skill_names]
 - Learning probability calculation: get_cdm_learning_probability(parent_states)
 - Binary response model: learned (P = 1-slip) vs not learned (P = guess)
 - One skill per item: eliminates compensatory/conjunctive complexity

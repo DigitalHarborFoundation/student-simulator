@@ -196,3 +196,13 @@ cython_debug/
 .dev/*
 .claude/
 .codex/
+
+#  Boneyard is a directory for unused or deprecated files.
+boneyard/
+# keep outputs/.gitkeep but ignore everything else
+outputs/*
+!outputs/.gitkeep
+CLAUDE.md
+*.csv
+.vscode/*
+project_requirements.txt

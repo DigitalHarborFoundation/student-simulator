@@ -4,7 +4,7 @@ including an Item, an ItemPool, and a FixedFormAssessment."""
 import random
 from typing import Any, Dict, List, Optional, Tuple, Union
 
-from pydantic import model_validator
+from pydantic import Field, model_validator
 
 from studentsimulator.general import Model, Skill, SkillSpace
 
@@ -16,7 +16,7 @@ class ActivityProvider(Model):
     - a lesson, video, or other instructional content ('gating event')
     - a tutoring session (interleaved instruction and practice)
     - formative practice with feedback (practice leading to learning)
-    - summative assessment without feedback (practice not learning to learning)
+    - summative assessment without feedback (practice not leading to learning)
 
     Notably, the ActivityProvider is *stateless*. It does not keep a
     memory of past interactions with students. Rather, each interaction accepts
@@ -29,7 +29,9 @@ class ActivityProvider(Model):
     history of a student's learning.
     """
 
-    skill_space: SkillSpace = None  # skills that this provider can generate items for
+    skill_space: SkillSpace = SkillSpace(
+        skills=[]
+    )  # skills that this provider can generate items for
     item_pools: Dict[str, "ItemPool"] = {}
 
     def construct_item_pool(
@@ -53,7 +55,7 @@ class ActivityProvider(Model):
         """Register a list of skills with the provider."""
         self.skill_space = skill_space
 
-    def get_skill(self, skill_id: str | Skill) -> Optional[Skill]:
+    def get_skill(self, skill_id: Union[str, Skill]) -> Optional[Skill]:
         """Get a skill by its ID."""
         for skill in self.skill_space.skills:
             if skill.name == skill:
@@ -66,7 +68,6 @@ class ActivityProvider(Model):
     ) -> list[Skill]:
         """Validate and convert a list of skills to Skill objects."""
         # if it's a SkillSpace, return the skills directly
-        print("HELP1", skills)
         if isinstance(skills, SkillSpace):
             return skills.skills
         elif isinstance(skills, list):
@@ -92,7 +93,6 @@ class ActivityProvider(Model):
                     raise ValueError(
                         "Skills must be a list of Skill objects or strings."
                     )
-            print("RETURNING", len(skill_list))
             return skill_list
         else:
             raise ValueError(
@@ -103,17 +103,25 @@ class ActivityProvider(Model):
         self,
         item_pool: Union[str, "ItemPool"],
         n_items: int,
-        skills: Union[list[Skill], list[str], SkillSpace] = None,
+        skills: Union[list[Skill], list[str], SkillSpace] = [],
     ) -> "FixedFormAssessment":
-        """Generate a random assessment with a specified number of items."""
+        """Generate a random assessment with a specified number of items.
+
+        Args:
+            item_pool: The name of the item pool to use, or the item pool object itself.
+            n_items: The number of items to include in the assessment.
+            skills: The skills to include in the assessment. If None, all skills in the skill space will be used.
+        """
+
         # Create a list of skill names that we can use for filtering
-        print("HELP0", skills)
-        skills_to_use = self.validate_skill_list(skills) if skills else []
-        print("HELP3", len(skills_to_use))
+        # if skills is an empty list, use all skills in the skill space
+        skills_to_use = (
+            self.validate_skill_list(skills) if skills else self.skill_space.skills
+        )
         # Filter items in the item pool based on the skills to use
 
         if isinstance(item_pool, str):
-            item_pool = self.item_pools.get(item_pool)
+            item_pool = self.item_pools[item_pool]
         valid_items = []
         for item in item_pool:
             if item.skill.name in [s.name for s in skills_to_use]:
@@ -177,15 +185,110 @@ class Item(Model):
     """
 
     skill: Skill
-    difficulty: float | Tuple[float, float] = 0.0
-    guess: float | Tuple[float, float] = 0.2
-    slip: float | Tuple[float, float] = 0.1
-    discrimination: float | Tuple[float, float] = 1.0
-    practice_effectiveness: float = 0.0
+
+    difficulty_logit: float = Field(
+        default=0.0, ge=-4.0, le=4.0, description="Difficulty parameter (logit scale)"
+    )
+    difficulty_logit_range: Optional[Tuple[float, float]] = Field(
+        default=None, description="Range for difficulty parameter [min, max]"
+    )
+
+    guess: float = Field(
+        default=0.2,
+        ge=0.0,
+        le=0.5,
+        description="Guess parameter (probability of correct response by guessing)",
+    )
+    guess_range: Optional[Tuple[float, float]] = Field(
+        default=None, description="Range for guess parameter [min, max]"
+    )
+
+    slip: float = Field(
+        default=0.1,
+        ge=0.0,
+        le=0.5,
+        description="Slip parameter (probability of incorrect response when should be correct)",
+    )
+    slip_range: Optional[Tuple[float, float]] = Field(
+        default=None, description="Range for slip parameter [min, max]"
+    )
+
+    discrimination: float = Field(
+        default=1.0,
+        ge=0.1,
+        le=3.0,
+        description="Discrimination parameter (slope of item characteristic curve)",
+    )
+    discrimination_range: Optional[Tuple[float, float]] = Field(
+        default=None, description="Range for discrimination parameter [min, max]"
+    )
+
+    practice_effectiveness_logit: float = Field(
+        default=0.0,
+        ge=0.0,
+        le=1.0,
+        description="Effectiveness of this item for skill practice",
+    )
+    practice_effectiveness_logit_range: Optional[Tuple[float, float]] = Field(
+        default=None, description="Range for practice effectiveness [min, max]"
+    )
+
     options: List["ItemOption"] = []
     bug_map: Dict[str, int] = {}  # misconception -> distractor mapping
 
     text: Optional[str] = None  # text of the item (question or task)
+
+    @model_validator(mode="after")
+    def validate_parameters(self) -> "Item":
+        """Validate that only one of each parameter/range pair is specified."""
+
+        # Validate ranges if provided
+        if self.difficulty_logit_range is not None:
+            if not (
+                -4.0
+                <= self.difficulty_logit_range[0]
+                <= self.difficulty_logit_range[1]
+                <= 4.0
+            ):
+                raise ValueError(
+                    "difficulty_logit_range must be [min, max] where -4.0 <= min <= max <= 4.0"
+                )
+
+        if self.guess_range is not None:
+            if not (0.0 <= self.guess_range[0] <= self.guess_range[1] <= 0.5):
+                raise ValueError(
+                    "guess_range must be [min, max] where 0.0 <= min <= max <= 0.5"
+                )
+
+        if self.slip_range is not None:
+            if not (0.0 <= self.slip_range[0] <= self.slip_range[1] <= 0.5):
+                raise ValueError(
+                    "slip_range must be [min, max] where 0.0 <= min <= max <= 0.5"
+                )
+
+        if self.discrimination_range is not None:
+            if not (
+                0.1
+                <= self.discrimination_range[0]
+                <= self.discrimination_range[1]
+                <= 3.0
+            ):
+                raise ValueError(
+                    "discrimination_range must be [min, max] where 0.1 <= min <= max <= 3.0"
+                )
+
+        if self.practice_effectiveness_logit_range is not None:
+            if not (
+                0.0
+                <= self.practice_effectiveness_logit_range[0]
+                <= self.practice_effectiveness_logit_range[1]
+                <= 1.0
+            ):
+                raise ValueError(
+                    "practice_effectiveness_logit_range must be [min, max] where 0.0 <= min <= max <= 1.0"
+                )
+
+        return self
 
     @model_validator(mode="after")
     def generate_options(self) -> "Item":
@@ -200,17 +303,41 @@ class Item(Model):
                 )
                 for i in range(4)  # Default to 4 options A, B, C, D
             ]
-        if isinstance(self.guess, tuple):
-            self.guess = round(random.uniform(self.guess[0], self.guess[1]), 3)
-        if isinstance(self.slip, tuple):
-            self.slip = round(random.uniform(self.slip[0], self.slip[1]), 3)
-        if isinstance(self.discrimination, tuple):
-            self.discrimination = round(
-                random.uniform(self.discrimination[0], self.discrimination[1]), 3
+
+        # Generate random values from ranges if specified
+        if self.difficulty_logit_range is not None:
+            self.difficulty_logit = round(
+                random.uniform(
+                    self.difficulty_logit_range[0], self.difficulty_logit_range[1]
+                ),
+                3,
             )
-        if isinstance(self.difficulty, tuple):
-            self.difficulty = round(
-                random.uniform(self.difficulty[0], self.difficulty[1]), 3
+
+        if self.guess_range is not None:
+            self.guess = round(
+                random.uniform(self.guess_range[0], self.guess_range[1]), 3
+            )
+
+        if self.slip_range is not None:
+            self.slip = round(random.uniform(self.slip_range[0], self.slip_range[1]), 3)
+        elif self.slip is None:
+            self.slip = 0.1  # Default value
+
+        if self.discrimination_range is not None:
+            self.discrimination = round(
+                random.uniform(
+                    self.discrimination_range[0], self.discrimination_range[1]
+                ),
+                3,
+            )
+
+        if self.practice_effectiveness_logit_range is not None:
+            self.practice_effectiveness_logit = round(
+                random.uniform(
+                    self.practice_effectiveness_logit_range[0],
+                    self.practice_effectiveness_logit_range[1],
+                ),
+                3,
             )
 
         return self
@@ -220,7 +347,7 @@ class Item(Model):
             f"Item id={self.id}\n"
             f"alignment={self.skill.name}\n"
             f"options={[option.label + ('*' if option.is_target else '') for option in self.options]})\n"
-            f"difficulty={self.difficulty}\n"
+            f"difficulty={self.difficulty_logit}\n"
             f"guess={self.guess}\n"
             f"slip={self.slip}\n"
             f"discrimination={self.discrimination}\n"
@@ -236,68 +363,5 @@ class FixedFormAssessment(Model):
     items: Optional[List[Item]]  # list of item IDs in the assessment
 
     def __iter__(self):
-        return iter(self.items)
-
-    # def generate_activity(self, student_history: Any) -> Any:
-    #     """The generator looks at the student's history and returns
-    #     (possibly adaptively) a new activity.
-
-    #     The student interacts with the activity, and the behavior
-    #     is recorded by the student object and tagged with the source.
-
-    #     Possible return types include:
-    #     - `Instruction`: a lesson, video, or other instructional content
-    #     - `PracticeInstance`: a practice item with feedback
-    #     - `TestQuestionInstance`: a summative assessment item without feedback
-
-    #     These can be composed into more complex activities. For example, a tutoring
-    #     session could have interleaved Instruction and Practice items, or a lesson
-    #     may have instruction followed by practice, and finally a formative assessment.
-
-    #     Args:
-    #         student_history: The student's history of interactions, skills, and events.
-    #     """
-
-
-# class Practice(Event):
-#     pass
-
-# class Intervention(Event):
-#     """Represents an intervention event where the student is given some
-#     additional support or instruction to help them learn a skill."""
-
-#     intervention_id: str  # intervention is linked to skill
-
-
-# class Feedback(BaseModel):
-#     """Evaluation of the student's behavior"""
-
-#     feedback_type: str  # "binary", "score", "rubric", "qualitative"
-#     correct: Optional[bool] = None  # for binary feedback
-#     score: Optional[float] = None  # for numeric scores
-#     max_score: Optional[float] = None  # scale information
-#     feedback_text: Optional[str] = None  # qualitative feedback
-#     rubric_scores: Optional[Dict[str, float]] = None  # detailed rubric
-
-
-# class InterventionEvent(BaseModel):
-#     """Something that happens TO the student"""
-
-#     student_id: str
-#     timestamp: int
-#     intervention_type: str  # "lesson", "video", "hint", "tutoring", "feedback"
-#     target_skill: Optional[str] = None
-#     target_misconception: Optional[str] = None
-#     intervention_data: Dict[str, Any] = {}  # intervention-specific parameters
-#     learning_probability: float = 0.8  # probability student learns the skill
-#     baseline_proficiency: float = 0.6  # proficiency level if learning occurs
-
-
-# class BehavioralEvent(BaseModel):
-#     """Something the student DOES, with potential feedback"""
-
-#     student_id: str
-#     timestamp: int
-#     behavior: BehaviorRepresentation
-#     feedback: Optional[Feedback] = None
-#     context: Dict[str, Any] = {}  # additional metadata
+        # If self.items is None, return an empty iterator; else, iterate over items
+        return iter(self.items or [])
