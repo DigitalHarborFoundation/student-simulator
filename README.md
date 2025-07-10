@@ -1,11 +1,11 @@
 # Student Simulator
 
-A Python framework for simulating realistic student learning and assessment interactions. Generate interpretable, configurable student behavior data for educational research, adaptive systems, and learning analytics.
+A Python framework for simulating student learning and assessment interactions. Generate interpretable, configurable student behavior data for educational research, adaptive systems, and learning analytics.
 
 ## 🚀 Quick Start
 
 ```bash
-pip install -e '.[dev]'
+pip install -e .
 ```
 
 ```python
@@ -75,7 +75,3 @@ pytest tests/
 ## 📄 License
 
 MIT License - see [LICENSE](LICENSE) for details.
-
----
-
-**Ready to simulate learning?** Start with our [Getting Started Guide](docs/getting-started.md) or check out the examples in `.dev/`.
