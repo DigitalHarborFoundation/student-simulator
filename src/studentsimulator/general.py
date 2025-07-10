@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import ClassVar, Literal, Optional
 
+import matplotlib.pyplot as plt
 import networkx as nx
 from pydantic import BaseModel, Field, model_validator
 
@@ -110,6 +111,148 @@ class SkillSpace(Model):
             raise ValueError(f"Requested skill was not found: {skill_name}")
         else:
             return matching_skills[0]
+
+    def save_dependency_diagram(self, filename: str = "skillspace.png"):
+        """Save a PNG diagram of the skill dependency structure (roots at top, leaves at bottom)."""
+        G = nx.DiGraph()
+        for skill in self.skills:
+            G.add_node(skill.name)
+            if skill.prerequisites is not None and hasattr(
+                skill.prerequisites, "parent_names"
+            ):
+                for parent in skill.prerequisites.parent_names:
+                    G.add_edge(parent, skill.name)
+        plt.figure(figsize=(10, 7))
+        try:
+            # Try to use Graphviz for hierarchical layout
+            pos = nx.nx_agraph.graphviz_layout(G, prog="dot")
+        except ImportError:
+            try:
+                pos = nx.nx_pydot.graphviz_layout(G, prog="dot")
+            except ImportError:
+                print(
+                    "Warning: pygraphviz or pydot not installed. Falling back to spring layout. For best results, install pygraphviz or pydot."
+                )
+                pos = nx.spring_layout(G, seed=42)
+        nx.draw(
+            G,
+            pos,
+            with_labels=True,
+            node_color="lightblue",
+            edge_color="gray",
+            node_size=2000,
+            font_size=10,
+            font_weight="bold",
+            arrowsize=20,
+        )
+        plt.title("Skill Dependency Structure (Hierarchical)")
+        plt.tight_layout()
+        plt.savefig(filename)
+        plt.close()
+
+    def plot_skill_mastery(self, students, filename="skill_mastery.png"):
+        """
+        Plot the skill dependency graph with node size proportional to the number of students who have each skill,
+        and edge width proportional to the number of students who have both prerequisite and dependent skills.
+        """
+        from collections import defaultdict
+
+        import matplotlib.pyplot as plt
+        import networkx as nx
+
+        # Build the dependency graph
+        G = nx.DiGraph()
+        for skill in self.skills:
+            G.add_node(skill.name)
+            if skill.prerequisites is not None and hasattr(
+                skill.prerequisites, "parent_names"
+            ):
+                for parent in skill.prerequisites.parent_names:
+                    G.add_edge(parent, skill.name)
+
+        # Count students who have each skill (learned=True)
+        skill_counts = defaultdict(int)
+        for student in students:
+            for skill_name, skill_state in student.skill_state.items():
+                if getattr(skill_state, "learned", False):
+                    skill_counts[skill_name] += 1
+
+        # Count students who have both skills for each edge
+        edge_counts = defaultdict(int)
+        for student in students:
+            learned_skills = {
+                k
+                for k, v in student.skill_state.items()
+                if getattr(v, "learned", False)
+            }
+            for u, v in G.edges():
+                if u in learned_skills and v in learned_skills:
+                    edge_counts[(u, v)] += 1
+
+        # Normalize node sizes and edge widths
+        min_node_size = 300
+        max_node_size = 3000
+        min_edge_width = 1
+        max_edge_width = 10
+        if skill_counts:
+            max_count = max(skill_counts.values())
+        else:
+            max_count = 1
+        if edge_counts:
+            max_edge_count = max(edge_counts.values())
+        else:
+            max_edge_count = 1
+        node_sizes = [
+            min_node_size
+            + (max_node_size - min_node_size) * (skill_counts.get(n, 0) / max_count)
+            for n in G.nodes()
+        ]
+        edge_widths = [
+            min_edge_width
+            + (max_edge_width - min_edge_width)
+            * (edge_counts.get((u, v), 0) / max_edge_count)
+            for u, v in G.edges()
+        ]
+
+        # Layout
+        try:
+            pos = nx.nx_pydot.graphviz_layout(G, prog="dot")
+        except ImportError:
+            print(
+                "Warning: pydot not installed. Falling back to spring layout. For best results, install pydot."
+            )
+            pos = nx.spring_layout(G, seed=42)
+
+        plt.figure(figsize=(12, 8))
+        nx.draw(
+            G,
+            pos,
+            with_labels=False,  # We'll add custom labels
+            node_color="lightblue",
+            edge_color="gray",
+            node_size=node_sizes,
+            width=edge_widths,
+            arrowsize=20,
+        )
+
+        # Add custom labels with skill name and count
+        for node, (x, y) in pos.items():
+            count = skill_counts.get(node, 0)
+            plt.text(
+                x,
+                y,
+                f"{node}\n({count})",
+                ha="center",
+                va="center",
+                fontsize=10,
+                fontweight="bold",
+                bbox=dict(boxstyle="round,pad=0.3", facecolor="white", alpha=0.8),
+            )
+
+        plt.title("Skill Mastery and Dependencies")
+        plt.tight_layout()
+        plt.savefig(filename)
+        plt.close()
 
 
 class Skill(Model):

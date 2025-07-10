@@ -327,15 +327,23 @@ Student.model_rebuild()
 
 
 def prepare_directory(filename: str) -> str:
-    """Ensure the directory for the given filename exists."""
+    """Ensure the directory for the given filename exists and return the full path."""
+    # Ensure .csv extension
     if not filename.endswith(".csv"):
         filename += ".csv"
-    dir = os.path.dirname(filename)
-    if dir == "":
-        # If no directory is specified, use the current directory
-        dir = os.getcwd()
-    os.makedirs(dir, exist_ok=True)
-    return os.path.join(dir, filename)
+
+    # Get the directory path
+    directory = os.path.dirname(filename)
+
+    # If no directory specified, use current directory
+    if directory == "":
+        return filename
+
+    # Create the directory if it doesn't exist
+    os.makedirs(directory, exist_ok=True)
+
+    # Return the full path
+    return filename
 
 
 def save_student_profile_to_csv(students: List[Student], filename: str) -> None:
@@ -348,6 +356,7 @@ def save_student_profile_to_csv(students: List[Student], filename: str) -> None:
         header = [
             "student_id",
             "student_name",
+            "skill_id",
             "skill_name",
             "skill_level",
             "skill_level_logit",
@@ -357,10 +366,21 @@ def save_student_profile_to_csv(students: List[Student], filename: str) -> None:
         # Write each student's skill state
         for student in students:
             for skill_name, skill_state in student.skill_state.items():
+                # Get the skill ID from the skill space
+                skill_id = None
+                if student.skill_space:
+                    try:
+                        skill = student.skill_space.get_skill(skill_name)
+                        skill_id = skill.id if skill else None
+                    except ValueError:
+                        # Skill not found in skill space
+                        skill_id = None
+
                 writer.writerow(
                     [
                         student.id,
                         student.name,
+                        skill_id,
                         skill_state.skill_name,
                         skill_state.skill_level,
                         (
@@ -401,22 +421,38 @@ def save_student_activity_to_csv(
                 if isinstance(event, BehaviorEventCollection):
                     for behavior_event in event.behavioral_events:
                         if include_engagements_without_ids:
+                            # add no matter what
                             all_events.append(behavior_event)
                         else:
-                            if behavior_event.engagement_object is not None:
+                            # add only if engagement_object is not None
+                            if (
+                                hasattr(behavior_event, "engagement_object")
+                                and behavior_event.engagement_object is not None
+                            ):
                                 all_events.append(behavior_event)
                 elif isinstance(event, BehaviorEvent):
                     if include_engagements_without_ids:
                         all_events.append(event)
                     else:
-                        if event.engagement_object is not None:
+                        if (
+                            hasattr(event, "engagement_object")
+                            and event.engagement_object is not None
+                        ):
                             all_events.append(event)
                 for behavior_event in all_events:
+                    # Get engagement_object_id safely
+                    engagement_id = None
+                    if (
+                        hasattr(behavior_event, "engagement_object")
+                        and behavior_event.engagement_object is not None
+                    ):
+                        engagement_id = behavior_event.engagement_object.id
+
                     writer.writerow(
                         [
                             student.id,
                             behavior_event.timestamp,
-                            behavior_event.engagement_object.id,
+                            engagement_id,
                             behavior_event.score
                             if hasattr(behavior_event, "score")
                             else None,

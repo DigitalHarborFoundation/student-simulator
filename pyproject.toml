@@ -3,7 +3,7 @@ requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "simlearn"
+name = "student-simulator"
 version = "0.1.0"
 description = "Student Response Simulation Framework for educational data"
 readme = "README.md"
@@ -15,11 +15,9 @@ authors = [
 dependencies = [
   "networkx",
   "numpy>=1.21",
-  "pandas>=1.3",
   "pydantic>=1.10",
-  "typer[all]>=0.6",
-  "PyYAML>=5.4",
-  "polars"
+  "matplotlib",
+  "pydot"
 ]
 
 [project.optional-dependencies]
@@ -38,10 +36,6 @@ docs = [
   "sphinx>=4.0",
   "myst-parser",
 ]
-numba = ["numba>=0.55"]
-
-[project.scripts]
-simulate = "simlearn.cli:main"
 
 [tool.black]
 line-length = 88
