@@ -1,13 +1,23 @@
 import csv
 import os
 import random
-from typing import Annotated, Any, Dict, List, Optional, Union
+from typing import Annotated, Any, Dict, List, Optional, Tuple, Union
 
 from pydantic import Field
+from sklearn.metrics import roc_auc_score
 
 from studentsimulator.activity_provider import FixedFormAssessment, Item
 from studentsimulator.general import Model, Skill, SkillSpace
 from studentsimulator.math import logistic, logit
+
+# Constants for train/validation/test splits
+TRAIN_SPLIT = 0
+VAL_SPLIT = 1
+TEST_SPLIT = 2
+
+# Constants for observation status
+OBSERVED = 1
+UNOBSERVED = 0
 
 
 class SkillState(Model):
@@ -258,6 +268,7 @@ class Student(Model):
             student_id=self.id,
             item=item,
             score=correct,
+            prob_correct=prob_correct,
             feedback_given=feedback,
             **kwargs,
         )
@@ -305,6 +316,7 @@ class BehaviorEvent(Model):
 class ItemResponseEvent(BehaviorEvent):
     item: Optional[Item] = None
     score: Optional[float] = None
+    prob_correct: Optional[float] = None
     feedback_given: Optional[bool] = False
     practice_increment_logit: Optional[float] = 0.0
 
@@ -324,6 +336,22 @@ class LearningEvent(BehaviorEvent):
 
 
 Student.model_rebuild()
+
+
+def calculate_auc(y_true: List[float], y_pred: List[float]) -> Optional[float]:
+    """Calculate AUC score for binary classification.
+
+    Args:
+        y_true: List of actual outcomes (0 or 1)
+        y_pred: List of predicted probabilities
+
+    Returns:
+        AUC score or None if calculation fails
+    """
+    try:
+        return roc_auc_score(y_true, y_pred)
+    except (ValueError, TypeError):
+        return None
 
 
 def prepare_directory(filename: str) -> str:
@@ -396,20 +424,61 @@ def save_student_activity_to_csv(
     students: List[Student],
     filename: str,
     include_engagements_without_ids: bool = False,
+    train_val_test_split: Optional[Tuple[float, float, float]] = None,
+    observation_rate: float = 1.0,
 ) -> None:
     """Save student activity (behavior events) to a CSV file."""
+
+    # Validate observation rate
+    if not 0.0 <= observation_rate <= 1.0:
+        raise ValueError("observation_rate must be between 0.0 and 1.0")
+
+    # Create train/validation/test split if requested
+    student_splits = {}
+    if train_val_test_split is not None:
+        train_pct, val_pct, test_pct = train_val_test_split
+        if abs(train_pct + val_pct + test_pct - 1.0) > 1e-6:
+            raise ValueError("train_val_test_split percentages must sum to 1.0")
+
+        # Shuffle students for random split
+        student_ids = [student.id for student in students]
+        random.shuffle(student_ids)
+
+        # Calculate split points
+        n_students = len(student_ids)
+        train_end = int(n_students * train_pct)
+        val_end = train_end + int(n_students * val_pct)
+
+        # Assign splits
+        for i, student_id in enumerate(student_ids):
+            if i < train_end:
+                student_splits[student_id] = 0  # train
+            elif i < val_end:
+                student_splits[student_id] = 1  # validation
+            else:
+                student_splits[student_id] = 2  # test
+
+    # Collect data for AUC calculation
+    y_true = []
+    y_pred = []
 
     path = prepare_directory(filename)
     with open(path, mode="w", newline="") as file:
         writer = csv.writer(file)
         # Write header
         header = [
-            "student_id",
-            "timestamp",
-            "engagement_object_id",
-            "score",
-            "group_id",
+            "studentid",
+            "timeid",
+            "itemid",
+            "skillid",
+            "response",
+            "prob_correct",
+            "groupid",
         ]
+        if train_val_test_split is not None:
+            header.append("train_val_test")
+        if observation_rate < 1.0:
+            header.append("observed")
         writer.writerow(header)
 
         # Write each student's behavior events
@@ -426,7 +495,7 @@ def save_student_activity_to_csv(
                         else:
                             # add only if engagement_object is not None
                             if (
-                                hasattr(behavior_event, "engagement_object")
+                                isinstance(behavior_event, ItemResponseEvent)
                                 and behavior_event.engagement_object is not None
                             ):
                                 all_events.append(behavior_event)
@@ -435,27 +504,62 @@ def save_student_activity_to_csv(
                         all_events.append(event)
                     else:
                         if (
-                            hasattr(event, "engagement_object")
+                            isinstance(event, ItemResponseEvent)
                             and event.engagement_object is not None
                         ):
                             all_events.append(event)
                 for behavior_event in all_events:
                     # Get engagement_object_id safely
                     engagement_id = None
+                    skill_id = None
                     if (
-                        hasattr(behavior_event, "engagement_object")
+                        isinstance(behavior_event, ItemResponseEvent)
                         and behavior_event.engagement_object is not None
                     ):
                         engagement_id = behavior_event.engagement_object.id
+                        # Get skill ID from the item
+                        if hasattr(behavior_event.engagement_object, "skill"):
+                            skill_id = behavior_event.engagement_object.skill.id
 
-                    writer.writerow(
-                        [
-                            student.id,
-                            behavior_event.timestamp,
-                            engagement_id,
-                            behavior_event.score
-                            if hasattr(behavior_event, "score")
-                            else None,
-                            event.id if hasattr(event, "id") else None,
-                        ]
-                    )
+                    # Collect data for AUC calculation
+                    if (
+                        hasattr(behavior_event, "score")
+                        and hasattr(behavior_event, "prob_correct")
+                        and behavior_event.score is not None
+                        and behavior_event.prob_correct is not None
+                    ):
+                        y_true.append(float(behavior_event.score))
+                        y_pred.append(float(behavior_event.prob_correct))
+
+                    row = [
+                        student.id,
+                        behavior_event.timestamp,
+                        engagement_id,
+                        skill_id,
+                        behavior_event.score
+                        if hasattr(behavior_event, "score")
+                        else None,
+                        round(behavior_event.prob_correct, 4)
+                        if hasattr(behavior_event, "prob_correct")
+                        and behavior_event.prob_correct is not None
+                        else None,
+                        event.id if hasattr(event, "id") else None,
+                    ]
+                    if train_val_test_split is not None:
+                        row.append(student_splits.get(student.id, 0))
+                    if observation_rate < 1.0:
+                        # Randomly determine if this event is observed
+                        is_observed = random.random() < observation_rate
+                        row.append(1 if is_observed else 0)
+                    writer.writerow(row)
+
+    # Calculate and report AUC
+    print(f"Debug: Collected {len(y_true)} responses for AUC calculation")
+    if y_true and y_pred:
+        auc_score = calculate_auc(y_true, y_pred)
+        if auc_score is not None:
+            print(f"AUC Score: {auc_score:.4f} (based on {len(y_true)} responses)")
+        else:
+            print("Could not calculate AUC score")
+    else:
+        print("No valid data for AUC calculation")

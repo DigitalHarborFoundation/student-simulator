@@ -7,7 +7,7 @@ from studentsimulator.student import Student
 def create_random_students(
     skill_space: SkillSpace,
     n_students: int,
-    practice_count: Union[int, list[int]] = [1, 9],
+    practice_count: Union[int, list[int]] = [1, 20],
     name_prefix: str = "student",
 ) -> List[Student]:
     """Create n students with randomly initialized skill values."""

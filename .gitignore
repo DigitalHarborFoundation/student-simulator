@@ -207,3 +207,4 @@ CLAUDE.md
 .vscode/*
 project_requirements.txt
 notes.txt
+.DS_Store

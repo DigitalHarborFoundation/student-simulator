@@ -10,14 +10,14 @@ readme = "README.md"
 requires-python = ">=3.10,<4.0"
 license = { file = "LICENSE" }
 authors = [
-  { name="Author Name", email="author@example.com" },
+  { name="Thomas Christie", email="thomas.christie@levi.digitalharbor.org" },
 ]
 dependencies = [
   "networkx",
   "numpy>=1.21",
   "pydantic>=1.10",
   "matplotlib",
-  "pydot"
+  "pydot",
 ]
 
 [project.optional-dependencies]
@@ -30,7 +30,10 @@ dev = [
   "ruff",
   "mypy",
   "types-PyYAML",
-  "pytest-pythonpath"
+  "pytest-pythonpath",
+  "scikit-learn>=1.0",
+  "xgboost>=1.5"
+
 ]
 docs = [
   "sphinx>=4.0",

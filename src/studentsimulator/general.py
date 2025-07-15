@@ -146,7 +146,10 @@ class SkillSpace(Model):
             arrowsize=20,
         )
         plt.title("Skill Dependency Structure (Hierarchical)")
-        plt.tight_layout()
+        try:
+            plt.tight_layout()
+        except Exception:
+            pass  # Ignore tight_layout errors
         plt.savefig(filename)
         plt.close()
 
@@ -157,6 +160,9 @@ class SkillSpace(Model):
         """
         from collections import defaultdict
 
+        import matplotlib
+
+        matplotlib.use("Agg")  # Ensure non-interactive backend
         import matplotlib.pyplot as plt
         import networkx as nx
 
@@ -250,7 +256,10 @@ class SkillSpace(Model):
             )
 
         plt.title("Skill Mastery and Dependencies")
-        plt.tight_layout()
+        try:
+            plt.tight_layout()
+        except Exception:
+            pass  # Ignore tight_layout errors
         plt.savefig(filename)
         plt.close()
 
