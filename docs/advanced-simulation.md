@@ -244,7 +244,14 @@ for student in students:
 
 # Save results
 save_student_profile_to_csv(students=students, filename="students.csv")
-save_student_activity_to_csv(students=students, filename="student_activity.csv")
+
+# Save with train/validation/test split for machine learning
+save_student_activity_to_csv(
+    students=students,
+    filename="student_activity.csv",
+    train_val_test_split=(0.7, 0.15, 0.15),  # 70% train, 15% validation, 15% test
+    observation_rate=0.9  # 90% of events are observed
+)
 ```
 
 ## Key Features of This Simulation
@@ -276,6 +283,7 @@ The generated data enables analysis of:
 - **Prerequisite effectiveness**: Impact of prerequisites on learning
 - **Assessment validity**: How well tests measure intended skills
 - **Student heterogeneity**: Distribution of skill mastery across population
+- **Machine learning workflows**: Train/validation/test splits for model development
 
 ## Scaling Considerations
 
@@ -283,3 +291,54 @@ The generated data enables analysis of:
 - **14 skills**: Complex enough to show learning patterns, not overwhelming
 - **3 assessment points**: Captures progression without excessive data
 - **25 items per skill**: Sufficient for reliable measurement
+
+## Machine Learning Integration
+
+The CSV export supports machine learning workflows with optional train/validation/test splits:
+
+```python
+# Standard export (no split)
+save_student_activity_to_csv(students=students, filename="all_data.csv")
+
+# Export with train/validation/test split
+save_student_activity_to_csv(
+    students=students,
+    filename="ml_ready_data.csv",
+    train_val_test_split=(0.7, 0.15, 0.15),  # 70% train, 15% validation, 15% test
+    observation_rate=0.95  # 95% of events are observed
+)
+
+# Export with train/test only
+save_student_activity_to_csv(
+    students=students,
+    filename="train_test_data.csv",
+    train_val_test_split=(0.8, 0.0, 0.2),  # 80% train, 20% test
+    observation_rate=0.8  # 80% of events are observed
+)
+
+# Export with missing data simulation
+save_student_activity_to_csv(
+    students=students,
+    filename="missing_data.csv",
+    observation_rate=0.7  # 70% of events are observed (simulates dropout)
+)
+```
+
+**CSV Output Options:**
+
+**Standard Output:**
+- `studentid, timeid, itemid, response, groupid`
+
+**With Train/Validation/Test Split:**
+- `studentid, timeid, itemid, response, groupid, train_val_test`
+- `train_val_test` values: 0=train, 1=validation, 2=test
+- All events for a student get the same split value
+
+**With Observation Rate:**
+- `studentid, timeid, itemid, response, groupid, observed`
+- `observed` values: 1=observed, 0=missing/unobserved
+- Randomly distributed across all events
+
+**With Both Features:**
+- `studentid, timeid, itemid, response, groupid, train_val_test, observed`
+- Combines both train/val/test splits and missing data simulation
