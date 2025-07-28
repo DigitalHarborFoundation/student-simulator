@@ -69,7 +69,9 @@ def test_train_val_test_split_basic(sample_students, activity_provider):
 
     # Have students take the assessment
     for student in sample_students:
-        student.take_test(assessment, timestamp=1)
+        provider.administer_fixed_form_assessment(
+            student_or_students=student, test=assessment
+        )
 
     # Test with 70/15/15 split
     with tempfile.NamedTemporaryFile(mode="w", suffix=".csv", delete=False) as tmp_file:
@@ -85,19 +87,17 @@ def test_train_val_test_split_basic(sample_students, activity_provider):
         # Read the CSV and check the split
         with open(tmp_path, "r") as f:
             reader = csv.DictReader(f)
-            # rows = list(reader)  # Removed unused variable
+            # Check that train_val_test column exists
+            assert reader.fieldnames is not None
+            assert "train_val_test" in reader.fieldnames
 
-        # Check that train_val_test column exists
-        assert reader.fieldnames is not None
-        assert "train_val_test" in reader.fieldnames
-
-        # Count students in each split
-        student_splits = {}
-        for row in reader:
-            student_id = int(row["studentid"])
-            split = int(row["train_val_test"])
-            if student_id not in student_splits:
-                student_splits[student_id] = split
+            # Count students in each split
+            student_splits = {}
+            for row in reader:
+                student_id = int(row["studentid"])
+                split = int(row["train_val_test"])
+                if student_id not in student_splits:
+                    student_splits[student_id] = split
 
         # Count splits
         train_count = sum(
@@ -119,14 +119,16 @@ def test_train_val_test_split_basic(sample_students, activity_provider):
         ), f"Test proportion {test_count/total_students:.3f} not close to 0.15"
 
         # Check that all students have the same split value across all their events
-        for student_id, split in student_splits.items():
-            student_rows = [
-                row for row in reader if int(row["studentid"]) == student_id
-            ]
-            for row in student_rows:
-                assert (
-                    int(row["train_val_test"]) == split
-                ), f"Student {student_id} has inconsistent split values"
+        with open(tmp_path, "r") as f:
+            reader = csv.DictReader(f)
+            for student_id, split in student_splits.items():
+                student_rows = [
+                    row for row in reader if int(row["studentid"]) == student_id
+                ]
+                for row in student_rows:
+                    assert (
+                        int(row["train_val_test"]) == split
+                    ), f"Student {student_id} has inconsistent split values"
 
     finally:
         Path(tmp_path).unlink(missing_ok=True)
@@ -138,7 +140,9 @@ def test_train_val_test_split_no_split(sample_students, activity_provider):
 
     # Have students take the assessment
     for student in sample_students:
-        student.take_test(assessment, timestamp=1)
+        provider.administer_fixed_form_assessment(
+            student_or_students=student, test=assessment
+        )
 
     with tempfile.NamedTemporaryFile(mode="w", suffix=".csv", delete=False) as tmp_file:
         tmp_path = tmp_file.name
@@ -149,16 +153,15 @@ def test_train_val_test_split_no_split(sample_students, activity_provider):
         # Read the CSV and check that train_val_test column is NOT present
         with open(tmp_path, "r") as f:
             reader = csv.DictReader(f)
+            # Check that train_val_test column does NOT exist
+            assert reader.fieldnames is not None
+            assert "train_val_test" not in reader.fieldnames
+            assert "observed" not in reader.fieldnames
 
-        # Check that train_val_test column does NOT exist
-        assert reader.fieldnames is not None
-        assert "train_val_test" not in reader.fieldnames
-        assert "observed" not in reader.fieldnames
-
-        # Check that we have the expected columns
-        expected_columns = ["studentid", "timeid", "itemid", "response", "groupid"]
-        for col in expected_columns:
-            assert col in reader.fieldnames, f"Expected column {col} not found"
+            # Check that we have the expected columns
+            expected_columns = ["studentid", "timeid", "itemid", "response", "groupid"]
+            for col in expected_columns:
+                assert col in reader.fieldnames, f"Expected column {col} not found"
 
     finally:
         Path(tmp_path).unlink(missing_ok=True)
@@ -198,7 +201,9 @@ def test_train_val_test_split_edge_cases(sample_students, activity_provider):
 
     # Have students take the assessment
     for student in sample_students:
-        student.take_test(assessment, timestamp=1)
+        provider.administer_fixed_form_assessment(
+            student_or_students=student, test=assessment
+        )
 
     with tempfile.NamedTemporaryFile(mode="w", suffix=".csv", delete=False) as tmp_file:
         tmp_path = tmp_file.name
@@ -236,7 +241,9 @@ def test_train_val_test_split_reproducibility(sample_students, activity_provider
 
     # Have students take the assessment
     for student in sample_students:
-        student.take_test(assessment, timestamp=1)
+        provider.administer_fixed_form_assessment(
+            student_or_students=student, test=assessment
+        )
 
     # Set a fixed random seed for reproducibility
     import random
@@ -289,7 +296,9 @@ def test_observation_rate_basic(sample_students, activity_provider):
 
     # Have students take the assessment
     for student in sample_students:
-        student.take_test(assessment, timestamp=1)
+        provider.administer_fixed_form_assessment(
+            student_or_students=student, test=assessment
+        )
 
     with tempfile.NamedTemporaryFile(mode="w", suffix=".csv", delete=False) as tmp_file:
         tmp_path = tmp_file.name
@@ -362,7 +371,9 @@ def test_observation_rate_with_train_val_test_split(sample_students, activity_pr
 
     # Have students take the assessment
     for student in sample_students:
-        student.take_test(assessment, timestamp=1)
+        provider.administer_fixed_form_assessment(
+            student_or_students=student, test=assessment
+        )
 
     with tempfile.NamedTemporaryFile(mode="w", suffix=".csv", delete=False) as tmp_file:
         tmp_path = tmp_file.name

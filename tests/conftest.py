@@ -1,7 +1,7 @@
 import pytest
 
-from studentsimulator.activity_provider import Item
 from studentsimulator.general import Misconception, Model, Skill, SkillSpace
+from studentsimulator.item import Item
 
 
 @pytest.fixture(autouse=True)

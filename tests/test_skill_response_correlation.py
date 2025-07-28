@@ -95,11 +95,14 @@ def calculate_skill_accuracy_correlation(
         total_responses = 0
 
         for _ in range(5):  # Take assessment 5 times for stable measurement
-            test_results = student.take_test(assessment, timestamp=0)
-            total_correct += sum(
-                1 for event in test_results.behavioral_events if event.score == 1
+            test_results = provider.administer_fixed_form_assessment(
+                student_or_students=student, test=assessment
             )
-            total_responses += len(test_results.behavioral_events)
+            test_result = test_results[0]  # Get the first (and only) result
+            total_correct += sum(
+                1 for event in test_result.behavioral_events if event.score == 1
+            )
+            total_responses += len(test_result.behavioral_events)
 
         accuracy = total_correct / total_responses if total_responses > 0 else 0.0
         accuracies.append(accuracy)

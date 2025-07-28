@@ -1,7 +1,6 @@
 import pytest
 from pydantic import ValidationError
 
-from studentsimulator.activity_provider import Item
 from studentsimulator.general import (
     Misconception,
     Model,
@@ -9,6 +8,7 @@ from studentsimulator.general import (
     Skill,
     SkillSpace,
 )
+from studentsimulator.item import Item
 
 
 @pytest.mark.parametrize(

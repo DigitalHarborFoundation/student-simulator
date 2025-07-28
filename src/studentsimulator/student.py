@@ -1,3 +1,5 @@
+"""Student simulation module."""
+
 import csv
 import os
 import random
@@ -247,17 +249,15 @@ class Student(Model):
             )
 
     def practice(self, skill: Skill):
-        """Practice a skill.
-        Practice happens during a 'practice encounter'.
-        Practice increases the skill level in logit space.
-        Practice is only effective if the skill is learned.
-        """
+        print(
+            f"Practicing {skill.name}, prerequisites: {getattr(skill.prerequisites, 'parent_names', None)}"
+        )
         if self.skill_state[skill.name].learned:
             self.skill_state[skill.name].skill_level = logistic(
                 logit(self.skill_state[skill.name].skill_level)
                 + skill.practice_increment_logit
             )
-        # Practice should create a BehaviorEvent that's stored in the student's history
+            self._update_ancestor_skills(skill, skill.practice_increment_logit, depth=1)
         if self.history:
             self.history.add_event(
                 ItemResponseEvent(
@@ -268,6 +268,32 @@ class Student(Model):
                     practice_increment_logit=skill.practice_increment_logit,
                 )
             )
+
+    def _update_ancestor_skills(self, skill: Skill, base_increment: float, depth: int):
+        print(
+            f"Updating ancestors for {skill.name}, parents: {getattr(skill.prerequisites, 'parent_names', None)}"
+        )
+        transfer_factor = 0.3  # 30% of the practice effect transfers to each level
+        if skill.prerequisites and skill.prerequisites.parent_names:
+            for parent_name in skill.prerequisites.parent_names:
+                if (
+                    parent_name in self.skill_state
+                    and self.skill_state[parent_name].learned
+                ):
+                    parent_skill = self.skill_space.get_skill(parent_name)
+                    transfer_increment = base_increment * (transfer_factor**depth)
+                    before = self.skill_state[parent_name].skill_level
+                    self.skill_state[parent_name].skill_level = logistic(
+                        logit(self.skill_state[parent_name].skill_level)
+                        + transfer_increment
+                    )
+                    after = self.skill_state[parent_name].skill_level
+                    print(
+                        f"Updated {parent_name}: {before} -> {after} (increment: {transfer_increment})"
+                    )
+                    self._update_ancestor_skills(
+                        parent_skill, base_increment, depth + 1
+                    )
 
     def has_prerequisites(self, skill: Skill) -> bool:
         """Check if the student has the prerequisites for a skill."""

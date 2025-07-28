@@ -147,16 +147,20 @@ def test_end_to_end_basic_usage(example_skill_space: SkillSpace, tmp_path: Path)
     # Students take the assessment
     # ------------------------------------------------------------------
     for student in (s1, s2, s3, s4):
-        results = student.take_test(assessment, timestamp=1)
+        results = provider.administer_fixed_form_assessment(
+            student_or_students=student, test=assessment
+        )
+        # The results are now a list, so we need to get the first (and only) result
+        test_result = results[0]
 
         # A BehaviorEventCollection is appended to history and returned.
-        assert results is student.history.get_events()[-1]
+        assert test_result is student.history.get_events()[-1]
 
         # One response per item.
-        assert len(results.behavioral_events) == len(assessment.items)
+        assert len(test_result.behavioral_events) == len(assessment.items)
 
         # Percent correct is calculated and lies in [0, 100].
-        assert 0.0 <= results.percent_correct <= 100.0
+        assert 0.0 <= test_result.percent_correct <= 100.0
 
     # ------------------------------------------------------------------
     # Persist outcomes to CSV and verify contents

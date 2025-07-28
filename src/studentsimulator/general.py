@@ -4,7 +4,7 @@ from typing import ClassVar, Literal, Optional
 
 import matplotlib.pyplot as plt
 import networkx as nx
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, model_validator, root_validator
 
 
 class Model(BaseModel):
@@ -40,7 +40,7 @@ class SkillSpace(Model):
     skills: list[Skill] = []
 
     @model_validator(mode="after")
-    def guarantee_unique(self):
+    def validate_and_sort(self):
         # Check for duplicate skill names
         skill_names = [s.name for s in self.skills]
         if len(skill_names) != len(set(skill_names)):
@@ -69,10 +69,6 @@ class SkillSpace(Model):
                 f"Skill codes must be unique. Found duplicates: {duplicates}"
             )
 
-        return self
-
-    @model_validator(mode="after")
-    def topological_sort(self):
         # Reorder the skills using topological sort
         # Do a topological sort on the skills
         # Make string representation with all nodes for error printing in assertion
@@ -99,6 +95,7 @@ class SkillSpace(Model):
         # Sort skills array in the same order as topological_order
         # Skills without prerequisites will be at the beginning
         self.skills = [self.get_skill(skill_name) for skill_name in topological_order]
+
         return self
 
     def get_skill(self, skill_name):
@@ -302,6 +299,13 @@ class Skill(Model):
         description="Initial skill level, representing the initial skill level after one learning encounter.",
         default=0.5,
     )
+
+    @root_validator(pre=True)
+    def ensure_prerequisite_structure(cls, values):
+        prereq = values.get("prerequisites")
+        if prereq is not None and isinstance(prereq, dict):
+            values["prerequisites"] = PrerequisiteStructure(**prereq)
+        return values
 
     def __init__(self, **data):
         # Delegate normal validation / ID assignment to the parent class first.
