@@ -6,8 +6,8 @@ from typing import Annotated, Any, Dict, List, Optional, Tuple, Union
 from pydantic import Field
 from sklearn.metrics import roc_auc_score
 
-from studentsimulator.activity_provider import FixedFormAssessment, Item
 from studentsimulator.general import Model, Skill, SkillSpace
+from studentsimulator.item import Item
 from studentsimulator.math import logistic, logit
 
 # Constants for train/validation/test splits
@@ -75,6 +75,7 @@ class Student(Model):
         default_factory=dict
     )  # current skill states
     history: Optional[StudentHistory] = None
+    days_since_initialization: int = 0
 
     def __init__(self, **data):
         # First call the parent Model.__init__ for validation and ID assignment
@@ -170,6 +171,45 @@ class Student(Model):
         # TODO: include history of learning and practice events
         return self
 
+    def wait(
+        self,
+        seconds: int = 0,
+        minutes: int = 0,
+        hours: int = 0,
+        days: int = 0,
+        weeks: int = 0,
+        months: int = 0,
+    ):
+        """Wait for a period of time."""
+        # check that all are non-negative
+        if (
+            seconds < 0
+            or minutes < 0
+            or hours < 0
+            or days < 0
+            or weeks < 0
+            or months < 0
+        ):
+            raise ValueError("All time units must be non-negative")
+
+        # check that all are float or convertable to float
+        if not all(
+            isinstance(x, (int, float))
+            for x in [seconds, minutes, hours, days, weeks, months]
+        ):
+            raise ValueError("All time units must be integers or floats")
+
+        self.days_since_initialization += int(
+            days
+            + (weeks * 7)
+            + (months * 30)
+            + (hours / 24)
+            + (minutes / (24 * 60))
+            + (seconds / (24 * 60 * 60))
+        )
+
+        return self
+
     def learn(self, skill: Skill, record_event_in_history: bool = False):
         """Learn a skill.
         Learning happens during a 'learning encounter'.
@@ -196,6 +236,15 @@ class Student(Model):
             # If the skill level is less than the initial skill level, increase it to equal the initial skill level
             if self.skill_state[skill.name].skill_level < skill.initial_skill_level:
                 self.skill_state[skill.name].skill_level = skill.initial_skill_level
+
+        if record_event_in_history:
+            self.history.add_event(
+                LearningEvent(
+                    student_id=self.id,
+                    skill=skill,
+                    timestamp_in_days_since_initialization=self.days_since_initialization,
+                )
+            )
 
     def practice(self, skill: Skill):
         """Practice a skill.
@@ -239,25 +288,6 @@ class Student(Model):
                 f"Invalid dependence model: {skill.prerequisites.dependence_model}"
             )
 
-    def take_test(
-        self, test: FixedFormAssessment, timestamp=0
-    ) -> "BehaviorEventCollection":
-        """Simulate taking a test with no formative feedback."""
-        responses = []
-        for item in test:
-            response = self.respond_to_item(
-                group=test, item=item, feedback=False, timestamp=timestamp
-            )
-            responses.append(response)
-        test_results = BehaviorEventCollection(
-            student_id=self.id,
-            behavioral_events=responses,
-        )
-        if self.history:
-            self.history.add_event(test_results)
-
-        return test_results
-
     def respond_to_item(
         self, item: "Item", feedback=False, **kwargs
     ) -> "BehaviorEvent":
@@ -288,7 +318,7 @@ class BehaviorEventCollection(Model):
     """Group of behavior events, typically for an activity or assessment."""
 
     student_id: int
-    timestamp: int = 0
+    timestamp_in_days_since_initialization: int = 0
     behavioral_events: List["BehaviorEvent"] = Field(
         default_factory=list,
         description="List of behavior events (can be BehaviorEvent or any subclass thereof)",
@@ -309,7 +339,7 @@ class BehaviorEventCollection(Model):
 
 class BehaviorEvent(Model):
     student_id: int
-    timestamp: int = 0
+    timestamp_in_days_since_initialization: int = 0
     # behavior: "BehaviorRepresentation" = None
 
 
@@ -323,7 +353,7 @@ class ItemResponseEvent(BehaviorEvent):
     def __str__(self):
         return (
             f"id={self.id}, type={str(self.item.__class__.__name__)}, "
-            f"score={self.score}, timestamp={self.timestamp}"
+            f"score={self.score}, timestamp={self.timestamp_in_days_since_initialization}"
         )
 
     @property
@@ -533,7 +563,7 @@ def save_student_activity_to_csv(
 
                     row = [
                         student.id,
-                        behavior_event.timestamp,
+                        behavior_event.timestamp_in_days_since_initialization,
                         engagement_id,
                         skill_id,
                         behavior_event.score
