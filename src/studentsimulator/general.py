@@ -4,7 +4,7 @@ from typing import ClassVar, Literal, Optional
 
 import matplotlib.pyplot as plt
 import networkx as nx
-from pydantic import BaseModel, Field, model_validator, root_validator
+from pydantic import BaseModel, Field, model_validator
 
 
 class Model(BaseModel):
@@ -163,7 +163,7 @@ class SkillSpace(Model):
         import matplotlib.pyplot as plt
         import networkx as nx
 
-        # Build the dependency graph
+        print("Generating skill mastery plot...")
         G = nx.DiGraph()
         for skill in self.skills:
             G.add_node(skill.name)
@@ -219,14 +219,51 @@ class SkillSpace(Model):
 
         # Layout
         try:
-            pos = nx.nx_pydot.graphviz_layout(G, prog="dot")
-        except ImportError:
+            pos = nx.nx_agraph.graphviz_layout(G, prog="dot")
+        except Exception as e:
             print(
-                "Warning: pydot not installed. Falling back to spring layout. For best results, install pydot."
+                "Warning: Could not use Graphviz layout for skill mastery plot. Reason:",
+                e,
             )
-            pos = nx.spring_layout(G, seed=42)
+            print(
+                "Falling back to hierarchical layout. For best results, install Graphviz (dot)."
+            )
+            # Use hierarchical layout as fallback
+            pos = nx.kamada_kawai_layout(G)
+            # Adjust positions to be more hierarchical
+            # Get topological sort to determine levels
+            try:
+                topo_order = list(nx.topological_sort(G))
+                # Create a hierarchical layout manually
+                levels = {}
+                for node in topo_order:
+                    # Find the level of this node (max level of parents + 1)
+                    parent_levels = [
+                        levels.get(pred, 0) for pred in G.predecessors(node)
+                    ]
+                    level = max(parent_levels) + 1 if parent_levels else 0
+                    levels[node] = level
 
-        plt.figure(figsize=(12, 8))
+                # Position nodes by level
+                max_level = max(levels.values()) if levels else 0
+                for node, level in levels.items():
+                    # Y position: higher level = higher Y (top of plot)
+                    y = 1.0 - (level / max_level) if max_level > 0 else 0.5
+                    # X position: distribute nodes at same level horizontally
+                    nodes_at_level = [
+                        n for n, level1 in levels.items() if level1 == level
+                    ]
+                    if len(nodes_at_level) > 1:
+                        idx = nodes_at_level.index(node)
+                        x = (idx - (len(nodes_at_level) - 1) / 2) / max(
+                            len(nodes_at_level), 1
+                        )
+                    else:
+                        x = 0
+                    pos[node] = (x, y)
+            except Exception:
+                # If topological sort fails, use spring layout as last resort
+                pos = nx.spring_layout(G, seed=42)
         nx.draw(
             G,
             pos,
@@ -293,14 +330,14 @@ class Skill(Model):
         description="Probability of the skill being learned with prerequisites.",
         default=0.9,
     )
-    initial_skill_level: float = Field(
+    initial_skill_level_after_learning: float = Field(
         ge=0.0,
         le=1.0,
         description="Initial skill level, representing the initial skill level after one learning encounter.",
         default=0.5,
     )
 
-    @root_validator(pre=True)
+    @model_validator(mode="before")
     def ensure_prerequisite_structure(cls, values):
         prereq = values.get("prerequisites")
         if prereq is not None and isinstance(prereq, dict):

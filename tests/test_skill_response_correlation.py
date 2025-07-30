@@ -25,7 +25,7 @@ def simple_skill_space() -> SkillSpace:
         probability_of_learning_without_prerequisites=0.0,  # Must be learned explicitly
         probability_of_learning_with_prerequisites=1.0,
         practice_increment_logit=0.1,
-        initial_skill_level=0.5,
+        initial_skill_level_after_learning=0.5,
     )
     return SkillSpace(skills=[skill])
 
@@ -230,7 +230,7 @@ def test_probability_calculation_accuracy(simple_skill_space: SkillSpace):
     correct_count = 0
 
     for _ in range(n_trials):
-        response = student.respond_to_item(item)
+        response = student._respond_to_item(item)
         if response.score == 1:
             correct_count += 1
 

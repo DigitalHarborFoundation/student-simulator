@@ -166,14 +166,14 @@ class ActivityProvider(Model):
             students = student_or_students
         if threads == 1:
             test_results = [
-                self.administer_fixed_form_assessment_to_single_student(student, test)
+                self._administer_fixed_form_assessment_to_single_student(student, test)
                 for student in students
             ]
         else:
             test_results = joblib.Parallel(n_jobs=threads)(
-                joblib.delayed(self.administer_fixed_form_assessment_to_single_student)(
-                    student, test
-                )
+                joblib.delayed(
+                    self._administer_fixed_form_assessment_to_single_student
+                )(student, test)
                 for student in students
             )
         assert len(test_results) == len(
@@ -184,13 +184,13 @@ class ActivityProvider(Model):
             student.history.add_event(test_result)
         return test_results
 
-    def administer_fixed_form_assessment_to_single_student(
+    def _administer_fixed_form_assessment_to_single_student(
         self, student: Student, test: FixedFormAssessment, timestamp=0
     ) -> "BehaviorEventCollection":
         """Simulate taking a test with no formative feedback."""
         responses = []
         for item in test:
-            response = student.respond_to_item(
+            response = student._respond_to_item(
                 group=test, item=item, feedback=False, timestamp=timestamp
             )
             responses.append(response)
@@ -214,3 +214,44 @@ class ActivityProvider(Model):
                 raise ValueError(f"Skill not found: {skill}")
             skill = skill_obj
         student.learn(skill, record_event_in_history=record_event_in_history)
+
+    def administer_practice(
+        self,
+        student: Student,
+        skill: Union[Skill, str],
+        n_items: int,
+        item_pool: Union[str, ItemPool] = None,
+    ):
+        """Administer practice for a skill.
+
+        Args:
+            student: The student to administer practice to.
+            skill: The skill to practice (name or Skill object).
+            n_items: Number of items to practice with.
+            item_pool: Either an ItemPool object or the name of a registered pool.
+        """
+        # Resolve skill if string
+        if isinstance(skill, str):
+            skill_obj = self.skill_space.get_skill(skill)
+            if skill_obj is None:
+                raise ValueError(f"Skill not found: {skill}")
+            skill = skill_obj
+
+        # Resolve item pool
+        if item_pool is None:
+            raise ValueError("Item pool is required for practice")
+        if isinstance(item_pool, str):
+            if item_pool not in self.item_pools:
+                raise ValueError(f"Item pool not found: {item_pool}")
+            item_pool = self.item_pools[item_pool]
+
+        # Draw n_items from item pool without replacement
+        if len(item_pool) < n_items:
+            raise ValueError(
+                f"Not enough items in the pool for the requested number of items. "
+                f"Requested {n_items}, valid items: {len(item_pool)}."
+            )
+        selected_items = random.sample(item_pool, n_items)
+
+        for item in selected_items:
+            student.practice(skill, item=item)

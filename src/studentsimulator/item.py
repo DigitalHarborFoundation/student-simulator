@@ -1,4 +1,7 @@
+from __future__ import annotations
+
 import random
+from collections.abc import Sequence
 from typing import Dict, List, Optional, Tuple
 
 from pydantic import Field, model_validator
@@ -24,10 +27,16 @@ class ItemOption(Model):
         return self
 
 
-class ItemPool(Model):
+class ItemPool(Model, Sequence):
     """A collection of items that can be used in assessments.
     This is typically used to generate assessments with a fixed number of items
     from a pool of available items.
+
+    The ItemPool implements the sequence protocol, so you can:
+    - Get length: len(pool)
+    - Iterate: for item in pool
+    - Index: pool[i]
+    - Slice: pool[i:j]
     """
 
     name: str
@@ -38,6 +47,24 @@ class ItemPool(Model):
 
     def __iter__(self):
         return iter(self.items)
+
+    def __len__(self) -> int:
+        return len(self.items)
+
+    def __getitem__(self, index):
+        """Support indexed access (pool[i]) and slicing (pool[i:j]).
+
+        Args:
+            index: An integer index or slice object.
+
+        Returns:
+            Item: A single item if indexed, or a list of items if sliced.
+
+        Raises:
+            IndexError: If index is out of range.
+            TypeError: If index is not an integer or slice.
+        """
+        return self.items[index]
 
 
 class Item(Model):

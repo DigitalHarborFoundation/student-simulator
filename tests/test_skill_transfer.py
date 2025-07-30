@@ -57,7 +57,7 @@ def test_skill_transfer_basic(hierarchical_skill_space):
     # Practice multiplication (should also benefit addition and basic_math)
     student.practice(hierarchical_skill_space.get_skill("multiplication"))
 
-    # Check that all skills improved
+    # Check that all skills improved compared with their baselines
     assert student.skill_state["multiplication"].skill_level > initial_multiplication
     assert student.skill_state["addition"].skill_level > initial_addition
     assert student.skill_state["basic_math"].skill_level > initial_basic_math

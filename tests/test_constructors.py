@@ -8,7 +8,7 @@ from studentsimulator.general import (
     Skill,
     SkillSpace,
 )
-from studentsimulator.item import Item
+from studentsimulator.item import Item, ItemPool
 
 
 @pytest.mark.parametrize(
@@ -232,3 +232,42 @@ def test_item_options_generation():
     assert len(item.options) == 4
     assert all(option.label in ["A", "B", "C", "D"] for option in item.options)
     assert sum(1 for option in item.options if option.is_target) == 1
+
+
+def test_item_pool_sequence_protocol():
+    """Test that ItemPool implements the sequence protocol correctly."""
+    # Create a pool with some items
+    items = [
+        Item(
+            skill=Skill(name="test"),
+            difficulty_logit=0.0,
+            discrimination=1.0,
+            guess=0.2,
+            slip=0.1,
+        )
+        for _ in range(3)
+    ]
+    pool = ItemPool(name="test_pool", items=items)
+
+    # Test length
+    assert len(pool) == 3
+
+    # Test iteration
+    assert list(pool) == items
+
+    # Test indexing
+    assert pool[0] == items[0]
+    assert pool[1] == items[1]
+    assert pool[-1] == items[-1]  # Negative indices should work
+
+    # Test slicing
+    assert pool[1:] == items[1:]
+    assert pool[:2] == items[:2]
+    assert pool[::2] == items[::2]  # Step slicing
+
+    # Test index out of range
+    with pytest.raises(IndexError):
+        _ = pool[len(items)]
+
+    # Test containment
+    assert items[0] in pool

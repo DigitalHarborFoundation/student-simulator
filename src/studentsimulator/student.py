@@ -23,6 +23,12 @@ UNOBSERVED = 0
 
 
 class SkillState(Model):
+    """Represents the skill state for a single student for a single skill.
+    Skills are represented on a [0,1] scale.
+    If a skill is 0, the student responds to skill-aligned items at chance level, i.e. with p=guess.
+    If a skill is 1, the student responds to skill-aligned items at a high but not necessarily perfect level, i.e. with p=(1-slip).
+    """
+
     skill_name: str = Field(
         pattern=r"^\w+$", description="Name of the skill, alphanumeric only"
     )
@@ -35,72 +41,109 @@ class SkillState(Model):
     )
 
 
-class StudentHistory(Model):
-    """Tracks student's learning and assessment history."""
+class StudentEventHistory(Model):
+    """List of events associated with a student that would either:
+    - affect their skill state (learning, practicing, waiting)
+    - reveal their skill state (responding to an item, taking an assessment)
+
+    Every entry in the events list is a subclass of BehaivorEvent or BehaviorEventCollection.
+    """
 
     student_id: int
     events: List[Any] = Field(default_factory=list)
 
+    def get_events(self, event_types: List[str] = None) -> List[Any]:
+        """Get all events in the history, optionally filtered by event type.
+
+        args:
+            event_types: List[str] = None, optional. If provided, only return events of these types.
+        """
+        if event_types is None:
+            return self.events
+        else:
+            return [
+                event for event in self.events if type(event).__name__ in event_types
+            ]
+
     def add_event(self, event: Any) -> None:
         """Add an event to the history."""
         self.events.append(event)
-
-    def get_events(self) -> List[Any]:
-        """Get all events in the history."""
-        return self.events
-
-    def get_assessment_events(self) -> List["BehaviorEventCollection"]:
-        """Get all assessment events."""
-        return [
-            event for event in self.events if isinstance(event, BehaviorEventCollection)
-        ]
-
-    def get_behavior_events(self) -> List["BehaviorEvent"]:
-        """Get all individual behavior events."""
-        behavior_events = []
-        for event in self.events:
-            if isinstance(event, BehaviorEventCollection):
-                behavior_events.extend(event.behavioral_events)
-            elif isinstance(event, BehaviorEvent):
-                behavior_events.append(event)
-        return behavior_events
 
     def clear(self) -> None:
         """Clear all events from history."""
         self.events.clear()
 
 
-class Student(Model):
-    name: Optional[str] = "None"  # just for use when printing for demos
-    skill_space: SkillSpace  # list of skill IDs available to this student
-    skill_state: Dict[str, "SkillState"] = Field(
-        default_factory=dict
-    )  # current skill states
-    history: Optional[StudentHistory] = None
-    days_since_initialization: int = 0
+class EndOfDaySkillStates(Model):
+    """Stores end-of-day snapshots of a student's skill levels.
 
-    def __init__(self, **data):
-        # First call the parent Model.__init__ for validation and ID assignment
-        super().__init__(**data)
+    The core data structure is an ordered dictionary where:
+     - key: day number since we started recording events for that student
+     - value: a dictionary where:
+        - key: skill name
+        - value: skill level at the end of the day.
 
-        # Initialize history if not provided
-        if self.history is None:
-            self.history = StudentHistory(student_id=self.id)
+    This is typically not used directly, but is updated automatically each
+    time the student's StudentEventHistory is updated,
+    and is used for post-hoc analysis.
 
-        # Initialize all skill levels to 0
-        if self.skill_space and not self.skill_state:
-            self.skill_state = {}
-            for skill in self.skill_space.skills:
-                self.skill_state[skill.name] = SkillState(
-                    skill_name=skill.name, skill_level=0
-                )
+    """
 
-    def print_history(self):
-        """Nicely print the student's history."""
-        if not self.history or not self.history.get_events():
-            print("No history available.")
+    daily_snapshots: Dict[int, Dict[str, float]] = {}  # day -> {skill_name: level}
+
+    def get_skill_trajectories(
+        self, skill_names: Union[str, List[str]] = None
+    ) -> List[Tuple[int, float]]:
+        """Get time series of (day, skill_level) for a specific skill.
+
+        args:
+            skill_name: str or list of str, optional. If provided, return the trajectory for the specified skill(s).
+            If not provided, return the trajectory for all skills.
+
+        returns:
+            List of tuples (day, skill_level) for the specified skill(s).
+        """
+        # Make a list of skills we need to return
+        all_skills = set()
+        for levels in self.daily_snapshots.values():
+            all_skills.update(levels.keys())
+        if isinstance(skill_names, str):
+            skill_set = [skill_names]
+            if skill_names not in all_skills:
+                raise ValueError(f"Skill {skill_names} not found in daily snapshots")
+        elif isinstance(skill_names, list):
+            skill_set = skill_names
+            for skill in skill_set:
+                if skill not in all_skills:
+                    raise ValueError(f"Skill {skill} not found in daily snapshots")
+        elif skill_names is None:
+            skill_set = list(all_skills)
         else:
-            print("\n".join(str(event) for event in self.history.get_events()))
+            raise ValueError(f"Invalid skill name: {skill_names}")
+
+        # Get the trajectory for each skill
+        trajectories = {}
+        for skill in skill_set:
+            trajectories[skill] = [
+                (day, levels.get(skill, 0.0))
+                for day, levels in sorted(self.daily_snapshots.items())
+            ]
+        return trajectories
+
+
+class Student(Model):
+    """A student is an entity that can learn skills, practice them, and take assessments.
+    Students have a skill state that represents their current proficiency in each skill.
+    They also have a history that records their interactions with the system.
+    """
+
+    name: str = "Student"  # Made optional with default value
+    skill_space: SkillSpace
+    event_history: Field(default_factory=StudentEventHistory)  # Renamed from history
+    end_of_day_skill_states: Field(
+        default_factory=EndOfDaySkillStates
+    )  # Renamed from daily_history
+    days_since_initialization: int = 0
 
     def __str__(self):
         rep = f"Student(name={self.name}, id={self.id})"
@@ -110,20 +153,240 @@ class Student(Model):
                 rep += "\n" + f"    {skill}: {skill_state.skill_level:.2f}"
         return rep
 
-    def set_skill_values(self, skill_values: Dict[str, float]) -> "Student":
-        """Set initial skill levels for the student."""
-        for skill_name, level in skill_values.items():
-            if self.skill_state is not None and skill_name in self.skill_state:
-                self.skill_state[skill_name].skill_level = level
-                self.skill_state[skill_name].learned = True
-            else:
-                # If the skill is not registered, create a new state
-                if self.skill_state is None:
-                    self.skill_state = {}
-                self.skill_state[skill_name] = SkillState(
-                    skill_name=skill_name, skill_level=level
+    def print_history(self):
+        """Nicely print the student's history."""
+        if not self.event_history or not self.event_history.get_events():
+            print("No history available.")
+        else:
+            print("\n".join(str(event) for event in self.event_history.get_events()))
+
+    @property
+    def skill_state(self) -> Dict[str, SkillState]:
+        """Get current skill state. Maintained for backward compatibility."""
+        return self.end_of_day_skill_states.current_skill_state
+
+    ##### Methods for handling student actions #####
+
+    @staticmethod
+    def _apply_practice(level: float, skill: Skill) -> float:
+        """Return new level after one practice increment (if learned)."""
+        new_logit = logit(level) + skill.practice_increment_logit
+        return logistic(new_logit)
+
+    @staticmethod
+    def _apply_forgetting(level: float, skill: Skill, days: int) -> float:
+        """Return new level after forgetting for *days* days."""
+        if days <= 0:
+            return level
+        new_logit = logit(level) - skill.decay_logit * days
+        min_logit = logit(0.01)
+        return logistic(max(min_logit, new_logit))
+
+    def practice(self, skill: Skill, item: Optional[Item] = None):
+        """Practice a skill with recursive transfer to all ancestor skills.
+
+        This method simulates a student practicing a specific skill, with the option
+        to use a particular item. When practice occurs on a learned skill, it increases
+        the skill level and also provides transfer effects to all ancestor skills
+        (parents, grandparents, etc.) with diminishing returns.
+
+        The transfer effect is based on research showing that learning in one domain
+        can benefit related domains, particularly when there are hierarchical
+        relationships. The diminishing returns (exponential decay with depth) reflects
+        that transfer effects are strongest for immediate prerequisites and weaker
+        for more distant ancestors.
+
+        References:
+        - Barnett, S. M., & Ceci, S. J. (2002). When and where do we apply what we learn?
+        - Singley, M. K., & Anderson, J. R. (1989). The transfer of cognitive skill.
+
+        Args:
+            skill: The skill being practiced
+            item: Optional item used for practice (affects response accuracy)
+        """
+
+        ## Generate behavior
+        if item is not None:
+            response = self._respond_to_item(item)
+            score = response.score
+            prob_correct = response.prob_correct
+        else:
+            # No item provided, so no score or prob_correct
+            score = None
+            prob_correct = None
+
+        ## Update skill states
+        if self.skill_state[skill.name].learned:
+            self.skill_state[skill.name].skill_level = self._apply_practice(
+                self.skill_state[skill.name].skill_level, skill
+            )
+            self._update_ancestor_skills(skill, skill.practice_increment_logit, depth=1)
+
+        ## Record event
+
+        # get response to item if provided
+
+        if self.event_history:
+            self.event_history.add_event(
+                ItemResponseEvent(
+                    student_id=self.id,
+                    item=item,
+                    score=score,
+                    prob_correct=prob_correct,
+                    feedback_given=True,
+                    practice_increment_logit=skill.practice_increment_logit,
                 )
+            )
+
+    def wait(
+        self,
+        seconds: int = 0,
+        minutes: int = 0,
+        hours: int = 0,
+        days: int = 0,
+        weeks: int = 0,
+        months: int = 0,
+    ):
+        """Wait for a period of time, applying forgetting to all learned skills."""
+        # check that all are non-negative
+        if (
+            seconds < 0
+            or minutes < 0
+            or hours < 0
+            or days < 0
+            or weeks < 0
+            or months < 0
+        ):
+            raise ValueError("All time units must be non-negative")
+
+        # check that all are float or convertable to float
+        if not all(
+            isinstance(x, (int, float))
+            for x in [seconds, minutes, hours, days, weeks, months]
+        ):
+            raise ValueError("All time units must be integers or floats")
+
+        # Calculate total days to wait
+        total_days = int(
+            days
+            + (weeks * 7)
+            + (months * 30)
+            + (hours / 24)
+            + (minutes / (24 * 60))
+            + (seconds / (24 * 60 * 60))
+        )
+
+        # ------------------------------------------------------------------
+        # Record a WaitEvent *before* applying forgetting so that the event
+        # timestamp represents the moment immediately preceding the wait.
+        # ------------------------------------------------------------------
+        if total_days > 0 and self.event_history is not None:
+            self.event_history.add_event(
+                WaitEvent(
+                    student_id=self.id,
+                    timestamp_in_days_since_initialization=self.days_since_initialization,
+                    days_waited=total_days,
+                )
+            )
+
+        # Apply forgetting day by day and record daily snapshots
+        if total_days > 0:
+            for day_offset in range(1, total_days + 1):
+                # Apply one day of forgetting to all learned skills
+                for skill in self.skill_space.skills:
+                    self.forget(skill, 1)  # Apply 1 day of forgetting
+
+                # Update day counter
+                self.days_since_initialization += 1
+
+                # Record daily snapshot after forgetting
+                self._record_daily_snapshot()
+        else:
+            # No time passed, but still update the day counter if needed
+            self.days_since_initialization += total_days
+
         return self
+
+    def forget(self, skill: Skill, time_days: int, rate: Optional[float] = None):
+        """Apply forgetting to a skill based on time elapsed.
+
+        Uses exponential decay on the logit scale, following Ebbinghaus forgetting curve.
+        Only affects learned skills - unlearned skills don't decay.
+
+        Args:
+            skill: The skill to apply forgetting to
+            time_days: Number of days since last practice/learning
+            rate: Forgetting rate in logit units per day. If None, uses skill.decay_logit
+        """
+        if not self.skill_state[skill.name].learned:
+            return  # Unlearned skills don't decay
+
+        if rate is None:
+            rate = skill.decay_logit
+
+        if time_days <= 0 or rate <= 0:
+            return  # No time passed or no decay rate
+
+        self.skill_state[skill.name].skill_level = self._apply_forgetting(
+            self.skill_state[skill.name].skill_level, skill, time_days
+        )
+
+    def learn(self, skill: Skill, record_event_in_history: bool = False):
+        """Learn a skill.
+        Learning happens during a 'learning encounter'.
+        First we check to see if the student has the necessary prerequisites, if there are any.
+        If they do, they learn with p=probability_of_learning_with_prerequisites.
+        If they don't, they learn with p=probability_of_learning_without_prerequisites.
+        If the skill is learned during this encounter, this sets the gate skill.learn=True,
+        which enables practice to be productive and increase the skill level.
+        """
+        # get random number
+        random_number = random.random()
+        # Check to see if the skill has prerequisites
+        if self.has_prerequisites(skill):
+            if random_number < skill.probability_of_learning_with_prerequisites:
+                # Set learned to True. If it was already True, we don't change it.
+                self.skill_state[skill.name].learned = True
+        else:
+            if random_number < skill.probability_of_learning_without_prerequisites:
+                self.skill_state[skill.name].learned = True
+
+        # If the skill is learned, we set the skill level to the initial skill level
+        if self.skill_state[skill.name].learned:
+            # If the skill level is less than the initial skill level, increase it to equal the initial skill level
+            if (
+                self.skill_state[skill.name].skill_level
+                < skill.initial_skill_level_after_learning
+            ):
+                self.skill_state[
+                    skill.name
+                ].skill_level = skill.initial_skill_level_after_learning
+
+        if record_event_in_history:
+            self.event_history.add_event(
+                LearningEvent(
+                    student_id=self.id,
+                    skill=skill,
+                    timestamp_in_days_since_initialization=self.days_since_initialization,
+                )
+            )
+
+    def _respond_to_item(
+        self, item: "Item", feedback=False, **kwargs
+    ) -> "BehaviorEvent":
+        """Engage with an item, and return a response."""
+        prob_correct = self.get_prob_correct(item)
+        correct = 1 if random.random() < prob_correct else 0
+        return ItemResponseEvent(
+            student_id=self.id,
+            item=item,
+            score=correct,
+            prob_correct=prob_correct,
+            feedback_given=feedback,
+            **kwargs,
+        )
+
+    ##### Methods for initializing student skill state #####
 
     def initialize_skill_values(
         self,
@@ -173,106 +436,38 @@ class Student(Model):
         # TODO: include history of learning and practice events
         return self
 
-    def wait(
-        self,
-        seconds: int = 0,
-        minutes: int = 0,
-        hours: int = 0,
-        days: int = 0,
-        weeks: int = 0,
-        months: int = 0,
-    ):
-        """Wait for a period of time."""
-        # check that all are non-negative
-        if (
-            seconds < 0
-            or minutes < 0
-            or hours < 0
-            or days < 0
-            or weeks < 0
-            or months < 0
-        ):
-            raise ValueError("All time units must be non-negative")
-
-        # check that all are float or convertable to float
-        if not all(
-            isinstance(x, (int, float))
-            for x in [seconds, minutes, hours, days, weeks, months]
-        ):
-            raise ValueError("All time units must be integers or floats")
-
-        self.days_since_initialization += int(
-            days
-            + (weeks * 7)
-            + (months * 30)
-            + (hours / 24)
-            + (minutes / (24 * 60))
-            + (seconds / (24 * 60 * 60))
-        )
-
+    def set_skill_values(self, skill_values: Dict[str, float]) -> "Student":
+        """Set initial skill levels for the student."""
+        for skill_name, level in skill_values.items():
+            if self.skill_state is not None and skill_name in self.skill_state:
+                self.skill_state[skill_name].skill_level = level
+                self.skill_state[skill_name].learned = True
+            else:
+                # If the skill is not registered, create a new state
+                if self.skill_state is None:
+                    self.skill_state = {}
+                self.skill_state[skill_name] = SkillState(
+                    skill_name=skill_name, skill_level=level
+                )
         return self
 
-    def learn(self, skill: Skill, record_event_in_history: bool = False):
-        """Learn a skill.
-        Learning happens during a 'learning encounter'.
-        First we check to see if the student has the necessary prerequisites, if there are any.
-        If they do, they learn with p=probability_of_learning_with_prerequisites.
-        If they don't, they learn with p=probability_of_learning_without_prerequisites.
-        If the skill is learned during this encounter, this sets the gate skill.learn=True,
-        which enables practice to be productive and increase the skill level.
-        """
+    ##### Methods for updating student skill state after actions #####
 
-        # get random number
-        random_number = random.random()
-        # Check to see if the skill has prerequisites
-        if self.has_prerequisites(skill):
-            if random_number < skill.probability_of_learning_with_prerequisites:
-                # Set learned to True. If it was already True, we don't change it.
-                self.skill_state[skill.name].learned = True
-        else:
-            if random_number < skill.probability_of_learning_without_prerequisites:
-                self.skill_state[skill.name].learned = True
+    def _record_event(self, event: Any):
+        """Add an event to the history and update daily snapshot if appropriate."""
 
-        # If the skill is learned, we set the skill level to the initial skill level
-        if self.skill_state[skill.name].learned:
-            # If the skill level is less than the initial skill level, increase it to equal the initial skill level
-            if self.skill_state[skill.name].skill_level < skill.initial_skill_level:
-                self.skill_state[skill.name].skill_level = skill.initial_skill_level
+        # Add event to history
+        self.event_history.add_event(event)
+        # Update end-of-day skill states
+        self._update_end_of_day_skill_states(event)
 
-        if record_event_in_history:
-            self.history.add_event(
-                LearningEvent(
-                    student_id=self.id,
-                    skill=skill,
-                    timestamp_in_days_since_initialization=self.days_since_initialization,
-                )
-            )
+    def _update_end_of_day_skill_states(self, event: Any):
+        """Update the end-of-day skill states based on the event."""
 
-    def practice(self, skill: Skill):
-        print(
-            f"Practicing {skill.name}, prerequisites: {getattr(skill.prerequisites, 'parent_names', None)}"
-        )
-        if self.skill_state[skill.name].learned:
-            self.skill_state[skill.name].skill_level = logistic(
-                logit(self.skill_state[skill.name].skill_level)
-                + skill.practice_increment_logit
-            )
-            self._update_ancestor_skills(skill, skill.practice_increment_logit, depth=1)
-        if self.history:
-            self.history.add_event(
-                ItemResponseEvent(
-                    student_id=self.id,
-                    item=None,
-                    score=None,
-                    feedback_given=True,
-                    practice_increment_logit=skill.practice_increment_logit,
-                )
-            )
+        # Update daily snapshot if appropriate
+        # TODO
 
     def _update_ancestor_skills(self, skill: Skill, base_increment: float, depth: int):
-        print(
-            f"Updating ancestors for {skill.name}, parents: {getattr(skill.prerequisites, 'parent_names', None)}"
-        )
         transfer_factor = 0.3  # 30% of the practice effect transfers to each level
         if skill.prerequisites and skill.prerequisites.parent_names:
             for parent_name in skill.prerequisites.parent_names:
@@ -282,15 +477,13 @@ class Student(Model):
                 ):
                     parent_skill = self.skill_space.get_skill(parent_name)
                     transfer_increment = base_increment * (transfer_factor**depth)
-                    before = self.skill_state[parent_name].skill_level
+                    # before = self.skill_state[parent_name].skill_level
                     self.skill_state[parent_name].skill_level = logistic(
                         logit(self.skill_state[parent_name].skill_level)
                         + transfer_increment
                     )
-                    after = self.skill_state[parent_name].skill_level
-                    print(
-                        f"Updated {parent_name}: {before} -> {after} (increment: {transfer_increment})"
-                    )
+                    # after = self.skill_state[parent_name].skill_level
+
                     self._update_ancestor_skills(
                         parent_skill, base_increment, depth + 1
                     )
@@ -314,22 +507,7 @@ class Student(Model):
                 f"Invalid dependence model: {skill.prerequisites.dependence_model}"
             )
 
-    def respond_to_item(
-        self, item: "Item", feedback=False, **kwargs
-    ) -> "BehaviorEvent":
-        """Simulate engaging with an item, and returning a response."""
-        prob_correct = self.get_prob_correct(item)
-        correct = 1 if random.random() < prob_correct else 0
-        return ItemResponseEvent(
-            student_id=self.id,
-            item=item,
-            score=correct,
-            prob_correct=prob_correct,
-            feedback_given=feedback,
-            **kwargs,
-        )
-
-    def get_prob_correct(self, item: "Item") -> float:
+    def _get_prob_correct(self, item: "Item") -> float:
         """Calculate probability of correct response based on skill state."""
 
         skill_level = self.skill_state[item.skill.name].skill_level
@@ -377,18 +555,66 @@ class ItemResponseEvent(BehaviorEvent):
     practice_increment_logit: Optional[float] = 0.0
 
     def __str__(self):
-        return (
-            f"id={self.id}, type={str(self.item.__class__.__name__)}, "
-            f"score={self.score}, timestamp={self.timestamp_in_days_since_initialization}"
-        )
+        return f"""ItemResponseEvent(
+    timestamp={self.timestamp_in_days_since_initialization}
+    id={self.id},
+    type={str(self.item.__class__.__name__)},
+    score={self.score},
+    prob_correct={self.prob_correct},
+    feedback_given={self.feedback_given},
+    practice_increment_logit={self.practice_increment_logit}
+    )"""
 
     @property
     def engagement_object(self) -> Optional[Item]:
         return self.item
 
 
+# ---------------------------------------------------------------------------
+# New event type: WaitEvent
+# ---------------------------------------------------------------------------
+
+
+class WaitEvent(BehaviorEvent):
+    """Represents the passage of time with no direct student interaction.
+
+    Storing this event allows us to replay a student's history later and
+    reconstruct skill trajectories without recording every single skill state
+    snapshot.  The duration (in days) is stored so that forgetting can be
+    re-applied deterministically during a replay.
+    """
+
+    days_waited: int = 0
+
+    def __str__(self):
+        return f"""WaitEvent(
+    timestamp={self.timestamp_in_days_since_initialization}
+    id={self.id},
+    days_waited={self.days_waited},
+    )"""
+
+
 class LearningEvent(BehaviorEvent):
     skill: Optional[Skill] = None
+    initial_learned: Optional[bool] = None
+    final_learned: Optional[bool] = None
+    initial_skill_level: Optional[float] = None
+    final_skill_level: Optional[float] = None
+    probability_of_learning_with_prerequisites: Optional[float] = None
+    had_prerequisites: Optional[bool] = None
+
+    def __str__(self):
+        return f"""LearningEvent(
+    timestamp={self.timestamp_in_days_since_initialization}
+    id={self.id},
+    skill={self.skill.name},
+    initial_learned={self.initial_learned},
+    final_learned={self.final_learned},
+    initial_skill_level={self.initial_skill_level},
+    final_skill_level={self.final_skill_level},
+    probability_of_learning_with_prerequisites={self.probability_of_learning_with_prerequisites},
+    had_prerequisites={self.had_prerequisites},
+    )"""
 
 
 Student.model_rebuild()
@@ -539,9 +765,9 @@ def save_student_activity_to_csv(
 
         # Write each student's behavior events
         for student in students:
-            if not student.history:
+            if not student.event_history:
                 continue
-            for event in student.history.get_events():
+            for event in student.event_history.get_events():
                 all_events = []
                 if isinstance(event, BehaviorEventCollection):
                     for behavior_event in event.behavioral_events:
