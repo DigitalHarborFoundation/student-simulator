@@ -366,17 +366,24 @@ class EndOfDaySkillStates(Model):
         if skill.prerequisites and skill.prerequisites.parent_names:
             for parent_name in skill.prerequisites.parent_names:
                 if (
-                    parent_name in student.skills
-                    and student.skills[parent_name].learned
+                    parent_name
+                    in student.skills.end_of_day_skill_states.current_skill_states
+                    and student.skills.end_of_day_skill_states.current_skill_states[
+                        parent_name
+                    ].learned
                 ):
                     parent_skill = self.skill_space.get_skill(parent_name)
                     transfer_increment = base_increment * (transfer_factor**depth)
-                    # before = student.skills[parent_name].skill_level
-                    student.skills[parent_name].skill_level = logistic(
-                        logit(student.skills[parent_name].skill_level)
+                    student.skills.end_of_day_skill_states.current_skill_states[
+                        parent_name
+                    ].skill_level = logistic(
+                        logit(
+                            student.skills.end_of_day_skill_states.current_skill_states[
+                                parent_name
+                            ].skill_level
+                        )
                         + transfer_increment
                     )
-                    # after = student.skills[parent_name].skill_level
 
                     self._update_ancestor_skills(
                         student, parent_skill, base_increment, depth + 1
