@@ -34,7 +34,7 @@ def sample_students(sample_skill_space):
     students = []
     for i in range(100):  # Create 100 students for good split testing
         student = Student(name=f"student_{i}", skill_space=sample_skill_space)
-        student.initialize_skill_values(practice_count=[1, 3])
+        student.randomly_initialize_skills(practice_count=[1, 3])
         students.append(student)
     return students
 

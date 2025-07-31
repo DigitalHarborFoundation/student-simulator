@@ -16,12 +16,12 @@ from pathlib import Path
 import pytest
 
 from studentsimulator.activity_provider import ActivityProvider
-from studentsimulator.general import Skill, SkillSpace
-from studentsimulator.student import (
-    Student,
-    save_student_activity_to_csv,
-    save_student_profile_to_csv,
+from studentsimulator.io import (
+    save_student_daily_skill_states_to_csv,
+    save_student_events_to_csv,
 )
+from studentsimulator.skill import Skill, SkillSpace
+from studentsimulator.student import Student
 
 # ---------------------------------------------------------------------------
 # Helper fixtures / builders
@@ -38,6 +38,7 @@ def example_skill_space() -> SkillSpace:
             "code": "CCSS.MATH.K.CC.A.3",
             "description": "Recognize and write numerals 0-20",
             "decay_logit": 0.01,  # natural temporal decay
+            "initial_skill_level_after_learning": 0.3,
         },
         {
             "name": "place_value_ones",
@@ -49,6 +50,7 @@ def example_skill_space() -> SkillSpace:
             },
             "probability_of_learning_without_prerequisites": 0.1,  # probability of learning this skill without prerequisites
             "decay_logit": 0.02,
+            "initial_skill_level_after_learning": 0.25,
         },
         {
             "name": "addition_no_carry",
@@ -60,6 +62,7 @@ def example_skill_space() -> SkillSpace:
             },
             "decay_logit": 0.03,
             "probability_of_learning_without_prerequisites": 0.01,  # probability of learning this skill without prerequisites
+            "initial_skill_level_after_learning": 0.2,
         },
         {
             "name": "place_value_tens",
@@ -71,6 +74,7 @@ def example_skill_space() -> SkillSpace:
             },
             "decay_logit": 0.02,
             "probability_of_learning_without_prerequisites": 0.1,  # probability of learning this skill without prerequisites
+            "initial_skill_level_after_learning": 0.15,
         },
     ]
 
@@ -107,7 +111,7 @@ def test_end_to_end_basic_usage(example_skill_space: SkillSpace, tmp_path: Path)
         }
     )
 
-    s4 = Student(skill_space=example_skill_space).initialize_skill_values(
+    s4 = Student(skill_space=example_skill_space).randomly_initialize_skills(
         practice_count=[1, 9]
     )  # random
 
@@ -131,7 +135,7 @@ def test_end_to_end_basic_usage(example_skill_space: SkillSpace, tmp_path: Path)
         difficulty_logit_range=(-2, 2),
         guess_range=(0.1, 0.3),
         slip_range=(0.01, 0.2),
-        discrimination=1.0,
+        discrimination_range=(1.0, 1.0),
     )
 
     # The pool should contain exactly 4 * 20 items.
@@ -154,7 +158,15 @@ def test_end_to_end_basic_usage(example_skill_space: SkillSpace, tmp_path: Path)
         test_result = results[0]
 
         # A BehaviorEventCollection is appended to history and returned.
-        assert test_result is student.history.get_events()[-1]
+        # The test_result is a BehaviorEventCollection, but get_individual_events() flattens it
+        # So we check that the test_result's behavioral_events are in the individual events
+        individual_events = student.skills.get_individual_events()
+        test_events = test_result.behavioral_events
+        # Check that all test events are in the individual events
+        for test_event in test_events:
+            assert (
+                test_event in individual_events
+            ), f"Test event {test_event.id} not found in individual events"
 
         # One response per item.
         assert len(test_result.behavioral_events) == len(assessment.items)
@@ -169,14 +181,14 @@ def test_end_to_end_basic_usage(example_skill_space: SkillSpace, tmp_path: Path)
     outputs_dir = tmp_path / "outputs"
     outputs_dir.mkdir(exist_ok=True)
 
-    profile_csv = outputs_dir / "students.csv"
-    activity_csv = outputs_dir / "student_activity.csv"
+    daily_states_csv = outputs_dir / "students_daily_skill_states.csv"
+    events_csv = outputs_dir / "student_events.csv"
 
-    save_student_profile_to_csv([s1, s2, s3], filename=str(profile_csv))
-    save_student_activity_to_csv([s1, s2, s3], filename=str(activity_csv))
+    save_student_daily_skill_states_to_csv([s1, s2, s3], filename=str(daily_states_csv))
+    save_student_events_to_csv([s1, s2, s3], filename=str(events_csv))
 
     # The files should now exist and contain more than just the header.
-    for csv_path in (profile_csv, activity_csv):
+    for csv_path in (daily_states_csv, events_csv):
         assert csv_path.exists(), f"{csv_path} was not created."
 
         with csv_path.open() as f:
@@ -185,8 +197,8 @@ def test_end_to_end_basic_usage(example_skill_space: SkillSpace, tmp_path: Path)
         # Always at least header + one data row.
         assert len(rows) > 1, f"{csv_path} is empty other than header."
 
-    # The activity file should have exactly 3 * 20 response rows (+1 header).
-    with activity_csv.open() as f:
+    # The events file should have exactly 3 * 20 response rows (+1 header).
+    with events_csv.open() as f:
         rows = list(csv.reader(f))
     expected_rows = 1 + 3 * len(assessment.items)
-    assert len(rows) == expected_rows, "Unexpected number of activity rows written."
+    assert len(rows) == expected_rows, "Unexpected number of event rows written."

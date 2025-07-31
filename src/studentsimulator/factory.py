@@ -1,6 +1,6 @@
 from typing import List, Union
 
-from studentsimulator.general import SkillSpace
+from studentsimulator.skill import SkillSpace
 from studentsimulator.student import Student
 
 
@@ -15,6 +15,6 @@ def create_random_students(
     for i in range(n_students):
         student = Student(
             name=f"{name_prefix}_{i}", skill_space=skill_space
-        ).initialize_skill_values(practice_count=practice_count)
+        ).randomly_initialize_skills(practice_count=practice_count)
         students.append(student)
     return students

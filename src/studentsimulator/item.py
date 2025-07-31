@@ -6,7 +6,8 @@ from typing import Dict, List, Optional, Tuple
 
 from pydantic import Field, model_validator
 
-from studentsimulator.general import Model, Skill
+from studentsimulator.general import Model
+from studentsimulator.skill import Skill
 
 
 class ItemOption(Model):
@@ -80,7 +81,7 @@ class Item(Model):
     """
 
     skill: Skill
-
+    activity_provider_name: Optional[str] = None
     difficulty_logit: float = Field(
         default=0.0, ge=-4.0, le=4.0, description="Difficulty parameter (logit scale)"
     )

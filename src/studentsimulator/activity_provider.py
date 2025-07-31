@@ -6,9 +6,11 @@ from typing import Any, Dict, List, Optional, Union
 
 import joblib
 
-from studentsimulator.general import Model, Skill, SkillSpace
+from studentsimulator.event import BehaviorEventCollection
+from studentsimulator.general import Model
 from studentsimulator.item import Item, ItemPool
-from studentsimulator.student import BehaviorEventCollection, Student
+from studentsimulator.skill import Skill, SkillSpace
+from studentsimulator.student import Student
 
 
 class FixedFormAssessment(Model):
@@ -48,6 +50,7 @@ class ActivityProvider(Model):
         skills=[]
     )  # skills that this provider can generate items for
     item_pools: Dict[str, "ItemPool"] = {}
+    name: str = "ActivityProvider"
 
     def construct_item_pool(
         self, name: str, skills: List[Skill], n_items_per_skill: int, **kwargs: Any
@@ -60,7 +63,7 @@ class ActivityProvider(Model):
         skills = self.validate_skill_list(skills)
         for skill in skills:
             for _ in range(n_items_per_skill):
-                item = Item(skill=skill, **kwargs)
+                item = Item(skill=skill, activity_provider_name=self.name, **kwargs)
                 item_pool.append(item)
         item_pool = ItemPool(name=name, items=item_pool)
         self.item_pools[name] = item_pool
@@ -181,22 +184,21 @@ class ActivityProvider(Model):
         ), "Got a different number of test results than students"
         # Update student histories
         for student, test_result in zip(students, test_results):
-            student.history.add_event(test_result)
+            student.skills.record_event(student, test_result)
         return test_results
 
     def _administer_fixed_form_assessment_to_single_student(
-        self, student: Student, test: FixedFormAssessment, timestamp=0
+        self, student: Student, test: FixedFormAssessment
     ) -> "BehaviorEventCollection":
         """Simulate taking a test with no formative feedback."""
         responses = []
         for item in test:
-            response = student._respond_to_item(
-                group=test, item=item, feedback=False, timestamp=timestamp
-            )
+            response = student._respond_to_item(item=item, feedback=False)
             responses.append(response)
         test_result = BehaviorEventCollection(
             student_id=self.id,
             behavioral_events=responses,
+            activity_provider_name=self.name,
         )
 
         return test_result
@@ -205,7 +207,6 @@ class ActivityProvider(Model):
         self,
         student: Student,
         skill: Union[Skill, str],
-        record_event_in_history: bool = True,
     ):
         """Administer a lesson to a student. If skill is None, administer a lesson for all skills in the provider's skill_space."""
         if isinstance(skill, str):
@@ -213,7 +214,7 @@ class ActivityProvider(Model):
             if skill_obj is None:
                 raise ValueError(f"Skill not found: {skill}")
             skill = skill_obj
-        student.learn(skill, record_event_in_history=record_event_in_history)
+        student.learn(skill, activity_provider_name=self.name)
 
     def administer_practice(
         self,

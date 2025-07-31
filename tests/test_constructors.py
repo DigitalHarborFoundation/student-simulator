@@ -1,14 +1,14 @@
 import pytest
 from pydantic import ValidationError
 
-from studentsimulator.general import (
+from studentsimulator.general import Model
+from studentsimulator.item import Item, ItemPool
+from studentsimulator.skill import (
     Misconception,
-    Model,
     PrerequisiteStructure,
     Skill,
     SkillSpace,
 )
-from studentsimulator.item import Item, ItemPool
 
 
 @pytest.mark.parametrize(
@@ -202,12 +202,14 @@ def test_skill_with_prerequisites():
         prerequisites=prereq,
         probability_of_learning_with_prerequisites=0.9,
         probability_of_learning_without_prerequisites=0.1,
+        initial_skill_level_after_learning=0.5,
     )
 
     assert skill.prerequisites.parent_names == ["parent_skill"]
     assert skill.prerequisites.dependence_model == "all"
     assert skill.probability_of_learning_with_prerequisites == 0.9
     assert skill.probability_of_learning_without_prerequisites == 0.1
+    assert skill.initial_skill_level_after_learning == 0.5
 
 
 def test_skill_validation():
@@ -221,6 +223,7 @@ def test_skill_validation():
             name="test_skill",
             probability_of_learning_with_prerequisites=0.1,
             probability_of_learning_without_prerequisites=0.9,
+            initial_skill_level_after_learning=0.5,
         )
 
 

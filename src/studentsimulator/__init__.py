@@ -12,8 +12,9 @@ import matplotlib
 
 from .activity_provider import ActivityProvider
 from .factory import create_random_students
-from .general import Skill, SkillSpace
-from .student import Student, save_student_activity_to_csv, save_student_profile_to_csv
+from .io import save_student_daily_skill_states_to_csv, save_student_events_to_csv
+from .skill import Skill, SkillSpace
+from .student import Student
 
 matplotlib.use("Agg")
 
