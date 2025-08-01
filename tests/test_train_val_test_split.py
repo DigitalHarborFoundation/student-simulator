@@ -5,7 +5,8 @@ from pathlib import Path
 import pytest
 
 from studentsimulator.activity_provider import ActivityProvider
-from studentsimulator.general import Skill, SkillSpace
+from studentsimulator.io import save_student_events_to_csv
+from studentsimulator.skill import Skill, SkillSpace
 from studentsimulator.student import (
     OBSERVED,
     TEST_SPLIT,
@@ -13,7 +14,6 @@ from studentsimulator.student import (
     UNOBSERVED,
     VAL_SPLIT,
     Student,
-    save_student_activity_to_csv,
 )
 
 
@@ -21,9 +21,21 @@ from studentsimulator.student import (
 def sample_skill_space():
     """Create a simple skill space for testing."""
     skills = [
-        Skill(name="skill1", prerequisites={"parent_names": []}),
-        Skill(name="skill2", prerequisites={"parent_names": ["skill1"]}),
-        Skill(name="skill3", prerequisites={"parent_names": ["skill2"]}),
+        Skill(
+            name="skill1",
+            prerequisites={"parent_names": []},
+            initial_skill_level_after_learning=0.5,
+        ),
+        Skill(
+            name="skill2",
+            prerequisites={"parent_names": ["skill1"]},
+            initial_skill_level_after_learning=0.5,
+        ),
+        Skill(
+            name="skill3",
+            prerequisites={"parent_names": ["skill2"]},
+            initial_skill_level_after_learning=0.5,
+        ),
     ]
     return SkillSpace(skills=skills)
 
@@ -78,7 +90,7 @@ def test_train_val_test_split_basic(sample_students, activity_provider):
         tmp_path = tmp_file.name
 
     try:
-        save_student_activity_to_csv(
+        save_student_events_to_csv(
             students=sample_students,
             filename=tmp_path,
             train_val_test_split=(0.7, 0.15, 0.15),
@@ -94,7 +106,7 @@ def test_train_val_test_split_basic(sample_students, activity_provider):
             # Count students in each split
             student_splits = {}
             for row in reader:
-                student_id = int(row["studentid"])
+                student_id = int(row["student_id"])
                 split = int(row["train_val_test"])
                 if student_id not in student_splits:
                     student_splits[student_id] = split
@@ -123,7 +135,7 @@ def test_train_val_test_split_basic(sample_students, activity_provider):
             reader = csv.DictReader(f)
             for student_id, split in student_splits.items():
                 student_rows = [
-                    row for row in reader if int(row["studentid"]) == student_id
+                    row for row in reader if int(row["student_id"]) == student_id
                 ]
                 for row in student_rows:
                     assert (
@@ -148,7 +160,7 @@ def test_train_val_test_split_no_split(sample_students, activity_provider):
         tmp_path = tmp_file.name
 
     try:
-        save_student_activity_to_csv(students=sample_students, filename=tmp_path)
+        save_student_events_to_csv(students=sample_students, filename=tmp_path)
 
         # Read the CSV and check that train_val_test column is NOT present
         with open(tmp_path, "r") as f:
@@ -159,7 +171,7 @@ def test_train_val_test_split_no_split(sample_students, activity_provider):
             assert "observed" not in reader.fieldnames
 
             # Check that we have the expected columns
-            expected_columns = ["studentid", "timeid", "itemid", "response", "groupid"]
+            expected_columns = ["student_id", "day", "item_id", "score", "prob_correct"]
             for col in expected_columns:
                 assert col in reader.fieldnames, f"Expected column {col} not found"
 
@@ -169,7 +181,9 @@ def test_train_val_test_split_no_split(sample_students, activity_provider):
 
 def test_train_val_test_split_validation():
     """Test that invalid split percentages raise an error."""
-    skill_space = SkillSpace(skills=[Skill(name="skill1")])
+    skill_space = SkillSpace(
+        skills=[Skill(name="skill1", initial_skill_level_after_learning=0.5)]
+    )
     student = Student(name="test", skill_space=skill_space)
 
     with tempfile.NamedTemporaryFile(mode="w", suffix=".csv", delete=False) as tmp_file:
@@ -178,14 +192,14 @@ def test_train_val_test_split_validation():
     try:
         # Test that percentages must sum to 1.0
         with pytest.raises(ValueError, match="percentages must sum to 1.0"):
-            save_student_activity_to_csv(
+            save_student_events_to_csv(
                 students=[student],
                 filename=tmp_path,
                 train_val_test_split=(0.5, 0.3, 0.3),  # Sums to 1.1
             )
 
         with pytest.raises(ValueError, match="percentages must sum to 1.0"):
-            save_student_activity_to_csv(
+            save_student_events_to_csv(
                 students=[student],
                 filename=tmp_path,
                 train_val_test_split=(0.5, 0.3, 0.1),  # Sums to 0.9
@@ -210,7 +224,7 @@ def test_train_val_test_split_edge_cases(sample_students, activity_provider):
 
     try:
         # Test 100% train (0% val, 0% test)
-        save_student_activity_to_csv(
+        save_student_events_to_csv(
             students=sample_students,
             filename=tmp_path,
             train_val_test_split=(1.0, 0.0, 0.0),
@@ -259,14 +273,14 @@ def test_train_val_test_split_reproducibility(sample_students, activity_provider
     try:
         # Generate two splits with the same seed
         random.seed(42)
-        save_student_activity_to_csv(
+        save_student_events_to_csv(
             students=sample_students,
             filename=tmp_path1,
             train_val_test_split=(0.7, 0.15, 0.15),
         )
 
         random.seed(42)
-        save_student_activity_to_csv(
+        save_student_events_to_csv(
             students=sample_students,
             filename=tmp_path2,
             train_val_test_split=(0.7, 0.15, 0.15),
@@ -305,7 +319,7 @@ def test_observation_rate_basic(sample_students, activity_provider):
 
     try:
         # Test with 80% observation rate
-        save_student_activity_to_csv(
+        save_student_events_to_csv(
             students=sample_students, filename=tmp_path, observation_rate=0.8
         )
 
@@ -339,7 +353,9 @@ def test_observation_rate_basic(sample_students, activity_provider):
 
 def test_observation_rate_validation():
     """Test that invalid observation rates raise an error."""
-    skill_space = SkillSpace(skills=[Skill(name="skill1")])
+    skill_space = SkillSpace(
+        skills=[Skill(name="skill1", initial_skill_level_after_learning=0.5)]
+    )
     student = Student(name="test", skill_space=skill_space)
 
     with tempfile.NamedTemporaryFile(mode="w", suffix=".csv", delete=False) as tmp_file:
@@ -350,14 +366,14 @@ def test_observation_rate_validation():
         with pytest.raises(
             ValueError, match="observation_rate must be between 0.0 and 1.0"
         ):
-            save_student_activity_to_csv(
+            save_student_events_to_csv(
                 students=[student], filename=tmp_path, observation_rate=1.5  # Too high
             )
 
         with pytest.raises(
             ValueError, match="observation_rate must be between 0.0 and 1.0"
         ):
-            save_student_activity_to_csv(
+            save_student_events_to_csv(
                 students=[student], filename=tmp_path, observation_rate=-0.1  # Too low
             )
 
@@ -379,7 +395,7 @@ def test_observation_rate_with_train_val_test_split(sample_students, activity_pr
         tmp_path = tmp_file.name
 
     try:
-        save_student_activity_to_csv(
+        save_student_events_to_csv(
             students=sample_students,
             filename=tmp_path,
             train_val_test_split=(0.7, 0.15, 0.15),

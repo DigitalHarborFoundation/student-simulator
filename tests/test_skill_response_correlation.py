@@ -12,7 +12,7 @@ from typing import List, Tuple
 import pytest
 
 from studentsimulator.activity_provider import ActivityProvider
-from studentsimulator.general import Skill, SkillSpace
+from studentsimulator.skill import Skill, SkillSpace
 from studentsimulator.student import Student
 
 
@@ -46,8 +46,8 @@ def create_students_with_skill_levels(
     for i, skill_level in enumerate(skill_levels):
         student = Student(name=f"student_{i}", skill_space=skill_space)
         # Set the skill level and mark as learned
-        student.skill_state["test_skill"].skill_level = skill_level
-        student.skill_state["test_skill"].learned = True
+        student.skills.set_skill_level("test_skill", skill_level)
+        student.skills["test_skill"].learned = True
         students.append(student)
     return students
 
@@ -87,7 +87,7 @@ def calculate_skill_accuracy_correlation(
 
     for student in students:
         # Get student's skill level
-        skill_level = student.skill_state["test_skill"].skill_level
+        skill_level = student.skills["test_skill"].skill_level
         skill_levels.append(skill_level)
 
         # Have student take the assessment multiple times to get stable accuracy
@@ -223,7 +223,7 @@ def test_probability_calculation_accuracy(simple_skill_space: SkillSpace):
     item = item_pool.items[0]
 
     # Calculate theoretical probability
-    theoretical_prob = student.get_prob_correct(item)
+    theoretical_prob = student._get_prob_correct(item)
 
     # Simulate many responses to get empirical probability
     n_trials = 1000

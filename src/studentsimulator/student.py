@@ -59,7 +59,7 @@ class Student(Model):
     @property
     def skill_state(self) -> Dict[str, SkillState]:
         """Get current skill state. Maintained for backward compatibility."""
-        return max(self.skills.end_of_day_skill_states.daily_skill_states.keys())
+        return self.skills.end_of_day_skill_states.current_skill_states
 
     @property
     def days_since_initialization(self) -> int:
@@ -145,6 +145,7 @@ class Student(Model):
             self,
             ItemResponseEvent(
                 student_id=self.id,
+                timestamp_in_days_since_initialization=self.days_since_initialization,
                 skill=skill,
                 item=item,
                 score=score,

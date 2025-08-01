@@ -18,9 +18,71 @@ import matplotlib
 import matplotlib.pyplot as plt
 import networkx as nx
 import numpy as np
+import seaborn as sns
 
-from studentsimulator.event import ItemResponseEvent
+from studentsimulator.event import ItemResponseEvent, LearningEvent, WaitEvent
 from studentsimulator.student import Student
+
+
+def create_event_table(student: Student) -> List[dict]:
+    """Create a table of events with standardized columns for analysis and plotting.
+
+    Returns:
+        List of dictionaries, each representing an event with keys:
+        - day: int (days since initialization)
+        - event_type: str (learning, practice, wait)
+        - skill_name: str or None
+        - learned: bool or None
+        - skill_level: float or None
+        - item_id: str or None
+        - activity_provider: str or None
+    """
+    events = []
+
+    for event in student.skills.get_individual_events():
+        event_dict = {
+            "day": event.timestamp_in_days_since_initialization,
+            "event_type": event.__class__.__name__.replace("Event", "").lower(),
+            "skill_name": None,
+            "learned": None,
+            "skill_level": None,
+            "item_id": None,
+            "activity_provider": None,
+        }
+
+        if isinstance(event, LearningEvent):
+            event_dict.update(
+                {
+                    "skill_name": event.skill.name,
+                    "learned": True,
+                    "skill_level": student.skills.end_of_day_skill_states.get_skill_state_for_single_skill(
+                        event.skill.name
+                    ).skill_level,
+                }
+            )
+        elif isinstance(event, ItemResponseEvent):
+            event_dict.update(
+                {
+                    "skill_name": event.skill.name,
+                    "learned": student.skills.end_of_day_skill_states.get_skill_state_for_single_skill(
+                        event.skill.name
+                    ).learned,
+                    "skill_level": student.skills.end_of_day_skill_states.get_skill_state_for_single_skill(
+                        event.skill.name
+                    ).skill_level,
+                    "item_id": event.item.id if event.item else None,
+                    "activity_provider": event.item.activity_provider_name
+                    if event.item
+                    else None,
+                }
+            )
+        elif isinstance(event, WaitEvent):
+            # For wait events, we don't have specific skill info
+            pass
+
+        events.append(event_dict)
+
+    return events
 
 
 def plot_skill_mastery(skill_space, students, filename="skill_mastery.png"):
@@ -168,7 +230,7 @@ def plot_skill_trajectory(
     filename: str = None,
     faceted: bool = False,
 ):
-    """Plot skill trajectory over time using end-of-day snapshots.
+    """Plot skill trajectory over time using daily skill states DataFrame with event coloring.
 
     Args:
         student: Student whose trajectory to plot
@@ -176,62 +238,158 @@ def plot_skill_trajectory(
         filename: Save to file if provided, otherwise show plot
         faceted: If True and plotting multiple skills, use separate subplots
     """
+    # Set seaborn style for better-looking plots
+    sns.set_style("whitegrid")
+    sns.set_palette("husl")
+
+    # Get the daily skill states DataFrame
+    df = student.skills.get_daily_skill_states_dataframe()
+
     if skill_name:
         # Plot single skill
-        trajectory = student.end_of_day_skill_states.get_skill_trajectory(skill_name)
-        if not trajectory:
-            print(f"No trajectory data found for skill '{skill_name}'")
+        skill_df = df[df["skill_name"] == skill_name].sort_values("day")
+        if skill_df.empty:
+            print(f"No data found for skill '{skill_name}'")
             return
 
-        plt.figure(figsize=(6, 4))
-        times, levels = zip(*trajectory)
-        plt.plot(times, levels, label=skill_name, marker="o", markersize=2)
-        plt.xlabel("Time (days)")
-        plt.ylabel("Skill level")
-        plt.title(f"Skill Trajectory - {skill_name}")
-        plt.ylim(0, 1)
-        plt.grid(True, alpha=0.3)
+        fig, ax = plt.subplots(figsize=(10, 6))
+
+        # Plot the line
+        ax.plot(
+            skill_df["day"],
+            skill_df["skill_level"],
+            color="steelblue",
+            linewidth=4,
+            alpha=0.8,
+        )
+
+        # Plot points with color coding
+        for _, row in skill_df.iterrows():
+            day, level = row["day"], row["skill_level"]
+
+            if row["num_learning_events"] > 0:
+                # Black dot for learning events
+                ax.scatter(day, level, color="black", s=100, zorder=5, alpha=0.8)
+            elif row["num_practice_events"] > 0:
+                # Gray dot for practice events (only if no learning occurred)
+                ax.scatter(day, level, color="gray", s=60, zorder=4, alpha=0.6)
+
+        ax.set_xlabel("Time (days)", fontsize=12)
+        ax.set_ylabel("Skill level", fontsize=12)
+        ax.set_title(f"Skill Trajectory - {skill_name}", fontsize=14, fontweight="bold")
+        ax.set_ylim(0, 1)
+        ax.grid(True, alpha=0.3)
+
+        # Add legend for point types
+        from matplotlib.lines import Line2D
+
+        legend_elements = [
+            Line2D(
+                [0],
+                [0],
+                marker="o",
+                color="w",
+                markerfacecolor="black",
+                markersize=8,
+                label="Learning Event",
+            ),
+            Line2D(
+                [0],
+                [0],
+                marker="o",
+                color="w",
+                markerfacecolor="gray",
+                markersize=6,
+                label="Practice Event",
+            ),
+        ]
+        ax.legend(handles=legend_elements, loc="lower right")
+
     else:
         # Plot all skills
-        all_trajectories = student.end_of_day_skill_states.get_all_skill_trajectories()
-        if not all_trajectories:
+        if df.empty:
             print("No trajectory data found")
             return
 
         if faceted:
             # Separate subplots for each skill
-            n_skills = len(all_trajectories)
-            fig, axes = plt.subplots(n_skills, 1, figsize=(8, 3 * n_skills))
+            skills = df["skill_name"].unique()
+            n_skills = len(skills)
+            fig, axes = plt.subplots(n_skills, 1, figsize=(10, 4 * n_skills))
             if n_skills == 1:
                 axes = [axes]
 
-            for i, (skill, trajectory) in enumerate(all_trajectories.items()):
-                times, levels = zip(*trajectory)
-                axes[i].plot(times, levels, marker="o", markersize=2)
-                axes[i].set_title(f"Skill: {skill}")
-                axes[i].set_ylabel("Skill level")
+            for i, skill in enumerate(skills):
+                skill_df = df[df["skill_name"] == skill].sort_values("day")
+
+                # Plot the line
+                axes[i].plot(
+                    skill_df["day"],
+                    skill_df["skill_level"],
+                    color="steelblue",
+                    linewidth=4,
+                    alpha=0.8,
+                )
+
+                # Plot points with color coding
+                for _, row in skill_df.iterrows():
+                    day, level = row["day"], row["skill_level"]
+
+                    if row["num_learning_events"] > 0:
+                        axes[i].scatter(
+                            day, level, color="black", s=100, zorder=5, alpha=0.8
+                        )
+                    elif row["num_practice_events"] > 0:
+                        axes[i].scatter(
+                            day, level, color="gray", s=60, zorder=4, alpha=0.6
+                        )
+
+                axes[i].set_title(f"Skill: {skill}", fontsize=12, fontweight="bold")
+                axes[i].set_ylabel("Skill level", fontsize=10)
                 axes[i].set_ylim(0, 1)
                 axes[i].grid(True, alpha=0.3)
 
-            axes[-1].set_xlabel("Time (days)")
+            axes[-1].set_xlabel("Time (days)", fontsize=10)
             plt.tight_layout()
         else:
             # All skills on one plot
-            plt.figure(figsize=(8, 6))
-            for skill, trajectory in all_trajectories.items():
-                times, levels = zip(*trajectory)
-                plt.plot(times, levels, label=skill, marker="o", markersize=2)
+            fig, ax = plt.subplots(figsize=(12, 8))
+            colors = sns.color_palette("husl", len(df["skill_name"].unique()))
 
-            plt.xlabel("Time (days)")
-            plt.ylabel("Skill level")
-            plt.title("Skill Trajectories")
-            plt.ylim(0, 1)
-            plt.legend(bbox_to_anchor=(1.05, 1), loc="upper left")
-            plt.grid(True, alpha=0.3)
+            for idx, skill in enumerate(df["skill_name"].unique()):
+                skill_df = df[df["skill_name"] == skill].sort_values("day")
+
+                # Plot the line
+                ax.plot(
+                    skill_df["day"],
+                    skill_df["skill_level"],
+                    color=colors[idx],
+                    linewidth=4,
+                    alpha=0.8,
+                    label=skill,
+                )
+
+                # Plot points with color coding
+                for _, row in skill_df.iterrows():
+                    day, level = row["day"], row["skill_level"]
+
+                    if row["num_learning_events"] > 0:
+                        ax.scatter(
+                            day, level, color="black", s=100, zorder=5, alpha=0.8
+                        )
+                    elif row["num_practice_events"] > 0:
+                        ax.scatter(day, level, color="gray", s=60, zorder=4, alpha=0.6)
+
+            ax.set_xlabel("Time (days)", fontsize=12)
+            ax.set_ylabel("Skill level", fontsize=12)
+            ax.set_title("Skill Trajectories", fontsize=14, fontweight="bold")
+            ax.set_ylim(0, 1)
+            ax.legend(bbox_to_anchor=(1.05, 1), loc="upper left")
+            ax.grid(True, alpha=0.3)
             plt.tight_layout()
 
     if filename:
-        plt.savefig(filename, bbox_inches="tight")
+        plt.savefig(filename, bbox_inches="tight", dpi=300)
         plt.close()
     else:
         plt.show()
@@ -243,7 +401,7 @@ def pair_item_responses_with_skill(
     """Return list of (ItemResponseEvent, skill_level_at_that_time) using end-of-day snapshots."""
     pairs: List[Tuple[ItemResponseEvent, float]] = []
 
-    for event in student.history.get_events():
+    for event in student.skills.get_individual_events():
         if not isinstance(event, ItemResponseEvent) or event.item is None:
             continue
 
@@ -251,14 +409,17 @@ def pair_item_responses_with_skill(
         event_day = int(event.timestamp_in_days_since_initialization)
 
         # Get skill level from end-of-day snapshot at or before the event day
-        trajectory = student.end_of_day_skill_states.get_skill_trajectory(skill_name)
+        trajectories = student.skills.end_of_day_skill_states.get_skill_trajectories(
+            skill_name
+        )
         skill_level = 0.0
 
-        for day, level in trajectory:
-            if day <= event_day:
-                skill_level = level
-            else:
-                break
+        if skill_name in trajectories:
+            for day, skill_state in trajectories[skill_name]:
+                if day <= event_day:
+                    skill_level = skill_state.skill_level
+                else:
+                    break
 
         pairs.append((event, skill_level))
 

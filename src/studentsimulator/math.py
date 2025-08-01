@@ -9,13 +9,10 @@ def logit(p: float) -> float:
 
     input range: [0, 1]
     output_range: (-inf, inf)
+
+    Note: this can be unstable for p near 0 or 1.
     """
-    # This is a reasonable implementation for most practical purposes.
-    # Clipping to [0.01, 0.99] avoids log(0) and log(1), which would be -inf/inf.
-    p = np.clip(p, 0.01, 0.99)
-    return round(
-        float(np.log(p) - np.log1p(-p)), 3
-    )  # np.log1p(-p) is log(1-p), more stable for p near 0
+    return float(np.log(p) - np.log1p(-p))
 
 
 def logistic(x: float) -> float:
@@ -27,4 +24,4 @@ def logistic(x: float) -> float:
     """
     # This is a standard and numerically stable implementation for moderate x.
     z = np.exp(-x)
-    return round(float(1 / (1 + z)), 3)
+    return float(1 / (1 + z))

@@ -4,7 +4,8 @@ from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Tuple, Uni
 
 import matplotlib.pyplot as plt
 import networkx as nx
-from pydantic import Field, model_validator
+import pandas as pd
+from pydantic import Field, field_validator, model_validator
 
 from studentsimulator.general import Model
 from studentsimulator.math import logistic, logit
@@ -136,14 +137,37 @@ class SkillState(Model):
     If a skill is 1, the student responds to skill-aligned items at a high but not necessarily perfect level, i.e. with p=(1-slip).
     """
 
+    model_config = {"validate_assignment": True}
+
     skill: Skill
     skill_level: float = Field(
-        default=0.0, ge=0.0, le=1.0, description="Current skill level (0.0 to 1.0)"
+        default=0.01,
+        ge=0.01,
+        le=0.99,
+        description=(
+            "Current skill level (0.01 to 0.99), equivalent to [-4.6, 4.6] on the logit scale. "
+            "Keeping this min/max is important as it helps with numerical stability and "
+            "also keeps us from going off the deep end of the logit scale."
+        ),
     )
     learned: bool = Field(
         default=False,
         description="Whether the skill has been learned cognitively. Practice can't increase the skill level if the skill is not learned.",
     )
+
+    # Validate the skill_level any time it is updated to make sure it is between the field's ge and le constraints
+    @field_validator("skill_level", mode="before")
+    @classmethod
+    def validate_skill_level(cls, v, info):
+        """Coerce skill_level to be between the field's ge and le constraints."""
+        # alphabetical order??
+        ge = cls.model_fields["skill_level"].metadata[0].ge
+        le = cls.model_fields["skill_level"].metadata[1].le
+        if v < ge:
+            return ge
+        elif v > le:
+            return le
+        return v
 
 
 class SkillSpace(Model):
@@ -353,11 +377,11 @@ class EndOfDaySkillStates(Model):
     @staticmethod
     def _apply_forgetting(level: float, skill: "Skill", days: int) -> float:
         """Return new level after forgetting for *days* days."""
+
         if days <= 0:
             return level
         new_logit = logit(level) - skill.decay_logit * days
-        min_logit = logit(0.01)
-        return logistic(max(min_logit, new_logit))
+        return logistic(new_logit)
 
     def _update_ancestor_skills(
         self, student, skill: "Skill", base_increment: float, depth: int
@@ -514,7 +538,17 @@ class EndOfDaySkillStates(Model):
         trajectories = {}
         for skill in skill_set:
             trajectories[skill] = [
-                (day, levels.get(skill, 0.0))
+                (
+                    day,
+                    levels.get(
+                        skill,
+                        SkillState(
+                            skill=self.skill_space.get_skill(skill),
+                            skill_level=0.01,
+                            learned=False,
+                        ),
+                    ).skill_level,
+                )
                 for day, levels in sorted(self.daily_skill_states.items())
             ]
         return trajectories
@@ -594,6 +628,48 @@ class StudentSkills(Model):
 
         return flattened_events
 
+    def get_daily_skill_states_dataframe(self) -> pd.DataFrame:
+        """Get a DataFrame of the daily skill states."""
+        """This returns one row per skill per day.
+        Each day has the skill name, the skill state,
+        the number of learning events, and the number of practice events."""
+        # We'll build a list of dicts, then convert to DataFrame
+        rows = []
+
+        # For each day, for each skill, get the skill state
+        for day, skill_states in sorted(
+            self.end_of_day_skill_states.daily_skill_states.items()
+        ):
+            for skill_name, skill_state in skill_states.items():
+                # Get the number of learning events for this skill
+                num_learning_events = sum(
+                    1
+                    for event in self.events
+                    if event.__class__.__name__ == "LearningEvent"
+                    and event.skill.name == skill_name
+                    and event.timestamp_in_days_since_initialization == day
+                )
+                # Get the number of practice events for this skill
+                num_practice_events = sum(
+                    1
+                    for event in self.events
+                    if event.__class__.__name__ == "ItemResponseEvent"
+                    and event.skill.name == skill_name
+                    and event.timestamp_in_days_since_initialization == day
+                )
+
+                row = {
+                    "day": day,
+                    "skill_name": skill_name,
+                    "skill_level": skill_state.skill_level,
+                    "learned": getattr(skill_state, "learned", None),
+                    "num_learning_events": num_learning_events,
+                    "num_practice_events": num_practice_events,
+                }
+                rows.append(row)
+        df = pd.DataFrame(rows)
+        return df
+
     def record_event(self, student, event: Any) -> None:
         """Add an event to the history."""
         self.events.append(event)
@@ -635,6 +711,58 @@ class StudentSkills(Model):
             raise ValueError(
                 f"Invalid dependence model: {skill.prerequisites.dependence_model}"
             )
+
+    def create_event_dataframe(self) -> pd.DataFrame:
+        """Create a DataFrame of events with one row per event for analysis and plotting.
+
+        Returns:
+            DataFrame with columns:
+            - day: int (days since initialization)
+            - event_type: str (learning, itemresponse, wait)
+            - skill_name: str or None
+            - learned: bool or None
+            - skill_level: float or None
+            - item_id: str or None
+            - activity_provider: str or None
+        """
+        events = []
+
+        for event in self.get_individual_events():
+            event_dict = {
+                "day": event.timestamp_in_days_since_initialization,
+                "event_type": event.__class__.__name__.replace("Event", "").lower(),
+                "skill_name": None,
+                "learned": None,
+                "skill_level": None,
+                "item_id": None,
+                "activity_provider": None,
+            }
+
+            if hasattr(event, "skill") and event.skill is not None:
+                skill_name = event.skill.name
+                event_dict.update(
+                    {
+                        "skill_name": skill_name,
+                        "learned": self.end_of_day_skill_states.get_skill_state_for_single_skill(
+                            skill_name
+                        ).learned,
+                        "skill_level": self.end_of_day_skill_states.get_skill_state_for_single_skill(
+                            skill_name
+                        ).skill_level,
+                    }
+                )
+
+                if hasattr(event, "item") and event.item is not None:
+                    event_dict.update(
+                        {
+                            "item_id": event.item.id,
+                            "activity_provider": event.item.activity_provider_name,
+                        }
+                    )
+
+            events.append(event_dict)
+
+        return pd.DataFrame(events).sort_values(by=["day", "event_type"])
 
 
 Skill.model_rebuild()

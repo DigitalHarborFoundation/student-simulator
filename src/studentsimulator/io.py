@@ -73,16 +73,18 @@ def save_student_daily_skill_states_to_csv(
             ) in (
                 student.skills.end_of_day_skill_states.get_skill_trajectories().items()
             ):
-                for day, skill_state in skill_trajectory:
+                # Get the skill object for this skill name
+                skill = student.skill_space.get_skill(skill_name)
+                for day, skill_level in skill_trajectory:
                     writer.writerow(
                         [
                             student.id,
                             student.name,
-                            skill_state.skill.id,
+                            skill.id,
                             skill_name,
                             day,
-                            round(skill_state.skill_level, 4),
-                            round(logit(skill_state.skill_level), 4),
+                            round(skill_level, 4),
+                            round(logit(skill_level), 4),
                         ]
                     )
 
