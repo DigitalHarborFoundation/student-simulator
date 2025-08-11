@@ -184,6 +184,8 @@ class Student(Model):
         self,
         skill: Annotated[Skill, "The skill to learn"],
         activity_provider_name: Optional[str] = None,
+        probability_of_learning_with_prerequisites: Optional[float] = None,
+        probability_of_learning_without_prerequisites: Optional[float] = None,
     ):
         """Learn a skill.
         Learning happens during a 'learning encounter'.
@@ -197,13 +199,22 @@ class Student(Model):
         initial_learned = self.skills.is_learned(skill)
         # get random number
         random_number = random.random()
+
+        # Override defaults if provided
+        if probability_of_learning_with_prerequisites is None:
+            probability_of_learning_with_prerequisites = (
+                skill.probability_of_learning_with_prerequisites
+            )
+        if probability_of_learning_without_prerequisites is None:
+            probability_of_learning_without_prerequisites = (
+                skill.probability_of_learning_without_prerequisites
+            )
+
         # Check to see if the skill has prerequisites
         if had_prerequisites:
-            learned = random_number < skill.probability_of_learning_with_prerequisites
+            learned = random_number < probability_of_learning_with_prerequisites
         else:
-            learned = (
-                random_number < skill.probability_of_learning_without_prerequisites
-            )
+            learned = random_number < probability_of_learning_without_prerequisites
 
         self.skills.record_event(
             self,

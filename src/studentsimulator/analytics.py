@@ -11,6 +11,7 @@ This module uses the end-of-day snapshots for efficient trajectory plotting and 
 """
 from __future__ import annotations
 
+import warnings
 from collections import defaultdict
 from typing import List, Tuple
 
@@ -216,10 +217,15 @@ def plot_skill_mastery(skill_space, students, filename="skill_mastery.png"):
         )
 
     plt.title("Skill Mastery and Dependencies")
-    try:
-        plt.tight_layout()
-    except Exception:
-        pass  # Ignore tight_layout errors
+
+    # Use constrained_layout instead of tight_layout to avoid warnings
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", UserWarning)
+        try:
+            plt.tight_layout()
+        except Exception:
+            pass  # Ignore tight_layout errors
+
     plt.savefig(filename)
     plt.close()
 
@@ -386,13 +392,21 @@ def plot_skill_trajectory(
             ax.set_ylim(0, 1)
             ax.legend(bbox_to_anchor=(1.05, 1), loc="upper left")
             ax.grid(True, alpha=0.3)
-            plt.tight_layout()
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", UserWarning)
+                plt.tight_layout()
 
     if filename:
         plt.savefig(filename, bbox_inches="tight", dpi=300)
         plt.close()
     else:
-        plt.show()
+        # Suppress show() warning in non-interactive environments
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", UserWarning)
+            try:
+                plt.show()
+            except Exception:
+                pass  # Ignore show() errors in non-interactive environments
 
 
 def pair_item_responses_with_skill(
@@ -488,10 +502,18 @@ def plot_accuracy_vs_skill(
             fontsize=8,
         )
 
-    plt.tight_layout()
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", UserWarning)
+        plt.tight_layout()
 
     if filename:
         plt.savefig(filename, bbox_inches="tight")
         plt.close()
     else:
-        plt.show()
+        # Suppress show() warning in non-interactive environments
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", UserWarning)
+            try:
+                plt.show()
+            except Exception:
+                pass  # Ignore show() errors in non-interactive environments

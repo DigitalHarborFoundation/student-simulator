@@ -26,7 +26,11 @@ def student_with_history(simple_skill):
     student = Student(name="Test Student", skill_space=skill_space)
 
     # Learn the skill
-    student.learn(simple_skill)
+    student.learn(
+        simple_skill,
+        probability_of_learning_with_prerequisites=1.0,
+        probability_of_learning_without_prerequisites=1.0,
+    )
 
     # Practice with some items
     item1 = Item(skill=simple_skill, difficulty_logit=0.0)
@@ -57,7 +61,11 @@ def test_daily_history_basic_functionality(simple_skill):
     assert trajectory["math_basics"][0] == (0, 0.01)  # Default minimum skill level
 
     # Learn skill (happens on same day, should update existing snapshot)
-    student.learn(simple_skill)
+    student.learn(
+        simple_skill,
+        probability_of_learning_with_prerequisites=1.0,
+        probability_of_learning_without_prerequisites=1.0,
+    )
 
     # Should still have 1 snapshot, but with updated skill level
     trajectory = student.skills.end_of_day_skill_states.get_skill_trajectories(
@@ -76,7 +84,11 @@ def test_daily_history_with_practice(simple_skill):
     student = Student(name="Test Student", skill_space=skill_space)
 
     # Learn and practice (both happen on same day)
-    student.learn(simple_skill)
+    student.learn(
+        simple_skill,
+        probability_of_learning_with_prerequisites=1.0,
+        probability_of_learning_without_prerequisites=1.0,
+    )
     initial_level = student.skills["math_basics"].skill_level
 
     item = Item(skill=simple_skill, difficulty_logit=0.0)
@@ -98,23 +110,30 @@ def test_daily_history_with_waiting(simple_skill):
     skill_space = SkillSpace(skills=[simple_skill])
     student = Student(name="Test Student", skill_space=skill_space)
 
-    # Learn skill
-    student.learn(simple_skill)
+    # Learn skill and set to a higher level to observe forgetting
+    student.learn(
+        simple_skill,
+        probability_of_learning_with_prerequisites=1.0,
+        probability_of_learning_without_prerequisites=1.0,
+    )
+    student.skills.set_skill_level("math_basics", 0.8)  # Set to high level
     initial_level = student.skills["math_basics"].skill_level
 
-    # Wait 3 days
-    student.wait(days=3)
+    # Wait 5 days for more noticeable forgetting
+    student.wait(days=5)
 
     # Should have snapshots for each day
     trajectory = student.skills.end_of_day_skill_states.get_skill_trajectories(
         "math_basics"
     )
     assert len(trajectory) == 1
-    assert len(trajectory["math_basics"]) >= 4  # Initial + learning + 3 days of waiting
+    assert len(trajectory["math_basics"]) >= 6  # Initial + learning + 5 days of waiting
 
     # Final level should be lower due to forgetting
     final_level = trajectory["math_basics"][-1][1]
-    assert final_level < initial_level
+    assert (
+        final_level < initial_level
+    ), f"Expected {final_level} < {initial_level} after forgetting"
 
 
 def test_plot_skill_trajectory_single_skill(student_with_history):
