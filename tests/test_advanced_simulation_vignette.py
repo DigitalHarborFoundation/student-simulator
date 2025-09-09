@@ -3,8 +3,10 @@ Test file to verify the advanced-simulation vignette code examples work correctl
 """
 
 import os
+import random
 
 import pandas as pd
+import pytest
 
 from studentsimulator.activity_provider import ActivityProvider
 from studentsimulator.analytics import plot_skill_mastery, plot_skill_trajectory
@@ -15,6 +17,13 @@ from studentsimulator.io import (
 )
 from studentsimulator.skill import Skill, SkillSpace
 from studentsimulator.student import Student
+
+
+@pytest.fixture(autouse=True)
+def set_random_seed():
+    """Set a fixed random seed for all tests in this class."""
+    random.seed(42)
+    yield
 
 
 class TestAdvancedSimulationVignette:

@@ -35,6 +35,7 @@ class BehaviorEvent(Model):
     student_id: int
     timestamp_in_days_since_initialization: int = 0
     activity_provider_name: Optional[str] = None
+    category: Optional[str] = None
     # behavior: "BehaviorRepresentation" = None
 
 
@@ -45,6 +46,7 @@ class ItemResponseEvent(BehaviorEvent):
     prob_correct: Optional[float] = None
     feedback_given: Optional[bool] = False
     practice_increment_logit: Optional[float] = 0.0
+    category: Optional[str] = "ItemResponse"
 
     def __str__(self):
         return f"""ItemResponseEvent(
@@ -78,6 +80,7 @@ class WaitEvent(BehaviorEvent):
     """
 
     days_waited: int = 0
+    category: str = "Wait"
 
     def __str__(self):
         return f"""WaitEvent(
@@ -95,6 +98,7 @@ class LearningEvent(BehaviorEvent):
     final_skill_level: Optional[float] = None
     probability_of_learning_with_prerequisites: Optional[float] = None
     had_prerequisites: Optional[bool] = None
+    category: str = "Learning"
 
     def __str__(self):
         return f"""LearningEvent(

@@ -130,7 +130,7 @@ class Student(Model):
 
         ## Generate behavior
         if item is not None:
-            response = self._respond_to_item(item)
+            response = self._respond_to_item(item, category="Practice")
             score = response.score
             prob_correct = response.prob_correct
             activity_provider_name = response.activity_provider_name
@@ -152,6 +152,7 @@ class Student(Model):
                 prob_correct=prob_correct,
                 feedback_given=True,
                 activity_provider_name=activity_provider_name,
+                category="Practice",
             ),
         )
 
@@ -247,18 +248,21 @@ class Student(Model):
         self,
         item: Annotated[Item, "The item to respond to"],
         feedback: Annotated[bool, "Whether to give feedback"] = False,
+        category: Annotated[Optional[str], "The type of event"] = None,
     ) -> BehaviorEvent:
         """Engage with an item, and return a response."""
         prob_correct = self._get_prob_correct(item)
         correct = 1 if random.random() < prob_correct else 0
         return ItemResponseEvent(
             student_id=self.id,
+            timestamp_in_days_since_initialization=self.days_since_initialization,
             item=item,
             skill=item.skill,
             score=correct,
             prob_correct=prob_correct,
             feedback_given=feedback,
             activity_provider_name=item.activity_provider_name,
+            category=category,
         )
 
 

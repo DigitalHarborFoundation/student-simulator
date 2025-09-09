@@ -139,6 +139,7 @@ def save_student_events_to_csv(
             "student_id",
             "day",
             "event_type",
+            "event_category",
             "skill_id",
             "item_id",
             "score",
@@ -172,6 +173,7 @@ def save_student_events_to_csv(
                     student.id,
                     event.timestamp_in_days_since_initialization,
                     type(event).__name__,
+                    event.category,
                     event.skill.id
                     if hasattr(event, "skill") and event.skill is not None
                     else None,

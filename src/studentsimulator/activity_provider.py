@@ -193,10 +193,13 @@ class ActivityProvider(Model):
         """Simulate taking a test with no formative feedback."""
         responses = []
         for item in test:
-            response = student._respond_to_item(item=item, feedback=False)
+            response = student._respond_to_item(
+                item=item, feedback=False, category="Assessment"
+            )
             responses.append(response)
         test_result = BehaviorEventCollection(
-            student_id=self.id,
+            student_id=student.id,
+            timestamp_in_days_since_initialization=student.days_since_initialization,
             behavioral_events=responses,
             activity_provider_name=self.name,
         )

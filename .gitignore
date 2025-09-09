@@ -208,3 +208,4 @@ CLAUDE.md
 project_requirements.txt
 notes.txt
 .DS_Store
+_dev/
